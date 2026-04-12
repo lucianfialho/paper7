@@ -126,6 +126,25 @@ paper7 get 2401.04088 | pbcopy                          # clipboard (macOS)
 paper7 get 2401.04088 | claude "explain the key ideas"  # feed to LLM
 ```
 
+### Claude Code integration
+
+Use paper7 as a slash command inside [Claude Code](https://docs.anthropic.com/en/docs/claude-code):
+
+```bash
+# Install the command (globally)
+mkdir -p ~/.claude/commands
+curl -sL https://raw.githubusercontent.com/lucianfialho/paper7/main/claude-code/paper7.md -o ~/.claude/commands/paper7.md
+```
+
+Then inside Claude Code:
+
+```
+/paper7 search "attention mechanism"
+/paper7 get 2401.04088
+```
+
+See [`claude-code/`](claude-code/) for details.
+
 ## Why Not Just Use PDF?
 
 | | Raw PDF | HTML | paper7 |

@@ -1,52 +1,29 @@
 # paper7
 
-> CLI tool that fetches arXiv papers as clean markdown for LLM knowledge bases. Zero dependencies beyond curl/sed/grep/awk.
+> CLI tool that fetches arXiv papers as clean Markdown for LLM context. Zero dependencies beyond curl/sed/grep/awk.
 
-## Usage
+## Why
 
-### Search papers by keyword
-```
-paper7 search "attention mechanism"
-paper7 search "reinforcement learning" --max 20
-paper7 search "transformer architecture" --sort date
-```
+Raw PDFs waste tokens and hurt LLM comprehension. paper7 extracts clean, structured Markdown from arXiv papers — 97% smaller than PDF, 86% smaller than raw HTML. Research shows that noisy, long contexts degrade LLM performance by 20%+ (Liu et al., "Lost in the Middle", 2023).
 
-### Fetch paper as markdown
-```
-paper7 get 2401.04088
-paper7 get https://arxiv.org/abs/2401.04088
-paper7 get 2401.04088 --no-refs
-paper7 get 2401.04088 --no-cache
-```
+## Install
 
-### Find GitHub repository for a paper
 ```
-paper7 repo 2401.04088
-```
-
-### List cached papers (local KB)
-```
-paper7 list
-```
-
-### Manage cache
-```
-paper7 cache clear
-paper7 cache clear 2401.04088
+curl -sSL https://raw.githubusercontent.com/lucianfialho/paper7/main/install.sh | bash
 ```
 
 ## Commands
 
-- `search <query>` — Search arXiv papers by keyword. Options: `--max N` (default 10), `--sort relevance|date`
-- `get <id>` — Fetch paper from ar5iv, convert to clean markdown, cache locally. Options: `--no-refs` (strip references), `--no-cache` (force re-download)
-- `repo <id>` — Extract GitHub repository URLs from paper
-- `list` — Show all cached papers with ID and title
-- `cache clear [id]` — Clear all cache or remove specific paper
+- `paper7 search <query>` — Search arXiv papers by keyword. Options: `--max N` (default 10), `--sort relevance|date`
+- `paper7 get <id>` — Fetch paper, convert to clean Markdown, cache locally. Options: `--no-refs` (strip references), `--no-cache` (force re-download)
+- `paper7 repo <id>` — Find GitHub repository URLs linked in the paper
+- `paper7 list` — Show all cached papers with ID and title
+- `paper7 cache clear [id]` — Clear all cache or remove specific paper
 
 ## Notes
 
-- Papers are fetched from ar5iv.labs.arxiv.org (HTML version of arXiv)
-- Cached papers are stored in `~/.paper7/cache/<id>/paper.md`
-- Like context7 but for academic papers
-- Output is plain text to stdout, suitable for piping
+- Papers are fetched from ar5iv.labs.arxiv.org (HTML version of arXiv, no PDF parsing)
+- Output is clean Markdown with proper headers (##), paragraphs, bold/italic
+- Cached at `~/.paper7/cache/<id>/paper.md`
 - Accepts arXiv ID (2401.04088) or full URL (https://arxiv.org/abs/2401.04088)
+- Output goes to stdout — pipe to any LLM, clipboard, or file
