@@ -1,6 +1,6 @@
 # paper7
 
-**arXiv papers as clean context for LLMs.** Zero dependencies. Bash-only.
+**arXiv papers as clean Markdown for LLMs.** Zero dependencies. Bash-only.
 
 Like [context7](https://github.com/upstash/context7) but for academic papers.
 
@@ -8,34 +8,33 @@ Like [context7](https://github.com/upstash/context7) but for academic papers.
 paper7 get 2401.04088 | claude "summarize this paper"
 ```
 
-## Benchmark: Token Savings
+## Benchmark
 
-Tested with 5 landmark papers (Attention, RAG, Mixtral, GPT-4, LoRA):
+Tested with 5 landmark papers (Attention, RAG, Mixtral, GPT-4, LoRA) — 169 pages total:
 
 ```
-                        Token Usage (5 papers combined)
-  
-  PDF via Vision  ████████████████████████████████████████████████  270k tokens
-  pdftotext       ██████████████████████████                        128k tokens  
-  paper7          ██████████████████                                 90k tokens  (-66%)
-  paper7 --norefs ████████████                                       51k tokens  (-81%)
+                          Size (5 papers combined)
+
+  Raw PDF       ████████████████████████████████████████████████  12,140KB
+  HTML (ar5iv)  ██████████████████                                2,522KB
+  paper7        ██                                                  349KB  (-97% vs PDF)
 ```
 
-| Paper | Pages | PDF Vision | pdftotext | paper7 | Savings |
-|-------|------:|-----------:|----------:|-------:|--------:|
-| Attention Is All You Need | 15 | 24k | 10k | 10k | -58% |
-| RAG | 12 | 19k | 17k | 17k | -10% |
-| Mixtral of Experts | 16 | 25k | 8k | 8k | -68% |
-| **GPT-4 Technical Report** | **100** | **160k** | **71k** | **30k** | **-81%** |
-| LoRA | 26 | 41k | 21k | 23k | -43% |
-| **Total** | **169** | **270k** | **128k** | **90k** | **-66%** |
+| Paper | Pages | PDF | HTML | paper7 | vs PDF | vs HTML |
+|-------|------:|----:|-----:|-------:|-------:|--------:|
+| Attention Is All You Need | 15 | 2,163KB | 343KB | 40KB | -98% | -88% |
+| RAG | 12 | 864KB | 301KB | 68KB | -92% | -77% |
+| Mixtral of Experts | 16 | 2,417KB | 216KB | 31KB | -98% | -85% |
+| **GPT-4 Technical Report** | **100** | **5,122KB** | **635KB** | **116KB** | **-97%** | **-81%** |
+| LoRA | 26 | 1,571KB | 1,024KB | 91KB | -94% | -91% |
+| **Total** | **169** | **12,140KB** | **2,522KB** | **349KB** | **-97%** | **-86%** |
 
-> The bigger the paper, the bigger the savings. GPT-4's 100-page report goes from 160k to 30k tokens.
+> Reproduce with `./benchmark/run.sh`
 
 ## How It Works
 
 ```
-search "topic" ──> choose papers ──> get (fetch + cache) ──> use as LLM context
+search "topic" ──> choose papers ──> get (fetch + clean) ──> use as LLM context
                                           │
                                           ▼
                                     ~/.paper7/
@@ -49,8 +48,8 @@ search "topic" ──> choose papers ──> get (fetch + cache) ──> use as 
 ```
 
 1. **Search** arXiv API for papers by keyword
-2. **Fetch** full text from [ar5iv](https://ar5iv.labs.arxiv.org) (HTML version of arXiv — no PDF parsing)
-3. **Clean** metadata via arXiv API (authors, title) + content via ar5iv (body text)
+2. **Fetch** full text from [ar5iv](https://ar5iv.labs.arxiv.org) (HTML version of arXiv — no PDF parsing needed)
+3. **Convert** to clean Markdown with proper headers, paragraphs, and structure
 4. **Cache** locally as your knowledge base
 
 ## Install
@@ -90,7 +89,7 @@ Found 55723 papers (showing 3):
 ```bash
 paper7 get 2401.04088                          # by ID
 paper7 get https://arxiv.org/abs/2401.04088    # by URL
-paper7 get 2401.04088 --no-refs                # strip references (save tokens)
+paper7 get 2401.04088 --no-refs                # strip references
 paper7 get 2401.04088 --no-cache               # force re-download
 ```
 
@@ -129,15 +128,24 @@ paper7 get 2401.04088 | claude "explain the key ideas"  # feed to LLM
 
 ## Why Not Just Use PDF?
 
-| | PDF via AI Vision | pdftotext | paper7 |
+| | Raw PDF | HTML | paper7 |
 |---|---|---|---|
-| Token efficiency | Bad (images) | OK | Good |
-| Two-column layout | Broken flow | Broken flow | Linear text |
-| Headers/footers | Every page | Every page | Removed |
-| Math formulas | Garbled | Garbled | Cleaned |
-| Authors/metadata | In body noise | In body noise | Structured header |
+| Size | Huge (images, fonts, layout) | Large (CSS, scripts, nav) | Minimal (text only) |
+| Structure | None (flat binary) | Buried in markup | Clean Markdown headers |
+| Two-column layout | Broken flow | Preserved but noisy | Linear text |
+| Headers/footers | Every page | Navigation chrome | Removed |
+| Math formulas | Garbled | HTML entities | Cleaned |
+| Authors/metadata | In body noise | Mixed with UI | Structured header |
 | Caching/KB | No | No | Built-in |
-| Dependencies | AI API | poppler | curl (any Unix) |
+| Dependencies | AI Vision API / poppler | Browser | curl (any Unix) |
+
+## Research
+
+The approach of extracting clean text instead of sending raw PDFs to LLMs is supported by academic research. See [`examples/research-kb/`](examples/research-kb/) for a knowledge base built with paper7 itself, including:
+
+- **Lost in the Middle** (Liu et al., 2023) — LLMs lose 20%+ performance when relevant info is buried in long, noisy contexts
+- **PDF-WuKong** (Xie et al., 2024) — sparse sampling reduces tokens by ~89% while improving comprehension
+- **Comparative Study of PDF Parsing Tools** (Adhikari & Agarwal, 2024) — recommends Markdown/LaTeX output for scientific documents
 
 ## License
 
