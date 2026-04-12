@@ -17,7 +17,11 @@ curl -sSL https://raw.githubusercontent.com/lucianfialho/paper7/main/install.sh 
 paper7 ships with an installable [skill](https://skills.sh) that teaches AI coding agents (Claude Code, Cursor, Codex) how to use it. Once installed, your agent can search arXiv and fetch papers directly into the conversation.
 
 ```bash
+# Core skill — search and fetch papers
 npx skills add lucianfialho/paper7 --skill paper7
+
+# Research skill — guided literature review before implementation
+npx skills add lucianfialho/paper7 --skill paper7-research
 ```
 
 Or manually as a Claude Code slash command:
@@ -31,7 +35,7 @@ curl -sL https://raw.githubusercontent.com/lucianfialho/paper7/main/claude-code/
 After installing, try prompts like:
 - `paper7 search "attention mechanism"` — search arXiv
 - `paper7 get 2401.04088` — fetch a paper as clean Markdown
-- `paper7 get 2401.04088 --no-refs` — fetch without references to save tokens
+- "Research whether LoRA or full fine-tuning is better for my use case" — triggers the research skill
 
 ## Usage
 
