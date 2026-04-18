@@ -5,6 +5,37 @@ All notable changes to paper7 are documented here.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com).
 Pre-1.0, minor versions may add features; breaking changes (if any) are called out explicitly.
 
+## [0.3.0] — 2026-04-18
+
+Semantic Scholar joins as a metadata-layer source. Real reference graph + TLDR enrichment for `paper7 get`. Establishes `docs/sources.md` as the per-source documentation home.
+
+### Added
+
+- **`paper7 refs <id>`** — lists references of a paper via Semantic Scholar's `/paper/{externalId}/references` endpoint. Accepts arXiv ID, arXiv URL, `pmid:NNN`, DOI, or S2 paperId. Output prefers `arxiv:` > `pmid:` > `doi:` > `s2:` for the printed prefix so the result chains cleanly into `paper7 get`. `--max N` (default 10), `--json` for raw S2 output.
+- **TLDR enrichment in `paper7 get`** — both `arxiv` and `pmid:` paths now make one S2 call (`?fields=tldr`) and inject `**TLDR:** <text>` into the Markdown header when S2 has a TLDR for the paper. The TLDR is also written into `meta.json` so cache hits don't re-call S2. Best-effort: any failure (network, 404, 429, missing `jq`) silently omits the line; the core fetch never breaks because of enrichment.
+- **`paper7 get --no-tldr`** — opt-out flag for offline use or when the user wants to skip the S2 call.
+- **`docs/sources.md`** — new file documenting all three sources (arXiv, PubMed, Semantic Scholar) with a consistent template (Purpose, Endpoints, Response format, Rate limits, Auth, Known gaps, Upstream docs). Includes an "Adding a new source" template that establishes the pattern for bioRxiv/OpenAlex.
+- New helpers in `paper7.sh`: `s2_check_jq`, `s2_paper_id_param`, `fetch_tldr` (best-effort, silent).
+
+### Changed
+
+- `paper7 get` now performs one extra HTTP call by default (Semantic Scholar TLDR lookup). Use `--no-tldr` to skip it.
+- README Sources subsection adds a Semantic Scholar paragraph + pointer to `docs/sources.md`.
+- README Usage block adds `paper7 refs` examples; CLI reference adds `refs` command and `--no-tldr` / `--json` options.
+
+### Notes
+
+- **`jq` becomes a hard dep for S2-using commands only** (`paper7 refs`, and the TLDR fetch inside `paper7 get`). Other commands stay pure curl/sed/awk. macOS Sequoia ships `jq` at `/usr/bin/jq`; brew/apt elsewhere.
+- TLDR coverage is ~80% of papers indexed by S2. Already-cached papers from before this release won't get retrofit TLDRs; users wanting them must `paper7 cache clear <id>` and re-`get`.
+- 5 of 8 S2 tests are skipped during heavy CI/dev iteration when the unauth rate limit (~100 req / 5min) trips. The skip-on-429 probe is the right behavior — better than fragile failures.
+
+### Out of scope (planned follow-ups)
+
+- `paper7 cites <id>` — reverse direction (papers citing a paper)
+- `paper7 vault` consuming S2 refs instead of regex wikilinks
+- Semantic Scholar search (`/paper/search`)
+- API key flow for higher rate limits
+
 ## [0.2.1] — 2026-04-18
 
 Interactive browser over the local KB. Small, focused release — no behavior change to fetch/search paths.
@@ -63,6 +94,7 @@ Initial release.
 - Claude Code slash command + skills.sh package (paper7, paper7-research)
 - Benchmark: 97% smaller than PDF, 86% smaller than raw HTML across 5 landmark papers
 
+[0.3.0]: https://github.com/lucianfialho/paper7/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/lucianfialho/paper7/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/lucianfialho/paper7/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/lucianfialho/paper7/releases/tag/v0.1.0
