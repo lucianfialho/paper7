@@ -50,6 +50,7 @@ paper7 search "psilocybin hypertension" --source pubmed --max 5
 paper7 get 2401.04088                          # arXiv
 paper7 get https://arxiv.org/abs/2401.04088
 paper7 get pmid:38903003                       # PubMed (abstract only)
+paper7 get doi:10.1101/2023.12.15.571821       # any DOI via Crossref (bioRxiv, medRxiv, etc.)
 paper7 get 2401.04088 --no-refs                # strip references
 paper7 get 2401.04088 --no-cache               # force re-download
 
@@ -92,6 +93,8 @@ paper7 queries one of two sources per search; pick based on the topic:
 - **`pubmed`**: biomedical, clinical, and pharmacological literature. Abstracts only (full text on PMC is a separate pipeline).
 
 PubMed results use a `pmid:` prefix on the ID; arXiv IDs keep the native `YYMM.NNNNN` form. Both coexist in the same local cache.
+
+`paper7 get doi:<DOI>` covers anything with a DOI — bioRxiv, medRxiv, PsyArXiv, ChemRxiv, journal articles — via Crossref (metadata + abstract). bioRxiv/medRxiv full text isn't available (their pages block direct HTTP); the rendered Markdown includes a `**Full text:**` link.
 
 Semantic Scholar is also wired in as a metadata layer (not a full-paper fetcher): `paper7 refs <id>` lists canonical references, and `paper7 get` enriches its Markdown header with an auto-generated `**TLDR:**` line when one exists.
 
@@ -167,6 +170,7 @@ paper7 <command> [options]
 Commands:
   search <query>       Search papers by keyword (arXiv or PubMed)
   get <id>             Fetch paper and convert to Markdown (TLDR via Semantic Scholar)
+                       id shapes: arXiv (YYMM.NNNNN), pmid:NNN, doi:10.XXXX/...
   refs <id>            List references via Semantic Scholar (requires jq)
                        id shapes: YYMM.NNNNN (arXiv),
                                   https://arxiv.org/abs/... (arXiv URL),
