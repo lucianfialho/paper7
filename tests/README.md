@@ -31,3 +31,4 @@ Each test script prints colored pass/fail lines and exits non-zero on failure
 | File | Feature | Issue |
 |---|---|---|
 | `test_pubmed_search.sh` | `paper7 search --source pubmed` | #1 |
+| `test_pubmed_get.sh` | `paper7 get pmid:NNN` + cache/list integration | #2 |

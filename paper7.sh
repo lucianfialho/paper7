@@ -7,6 +7,8 @@ AR5IV_URL="https://ar5iv.labs.arxiv.org/html"
 ARXIV_API="http://export.arxiv.org/api/query"
 PUBMED_ESEARCH="https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
 PUBMED_ESUMMARY="https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"
+PUBMED_EFETCH="https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
+PUBMED_ARTICLE_URL="https://pubmed.ncbi.nlm.nih.gov"
 
 # Colors (disabled when not a TTY)
 if [ -t 1 ]; then
@@ -85,6 +87,34 @@ parse_arxiv_id() {
   return 1
 }
 
+parse_pmid() {
+  local input="$1"
+  local id=""
+
+  # Strip accepted prefixes
+  id="${input#pmid:}"
+  id="${id#https://pubmed.ncbi.nlm.nih.gov/}"
+  id="${id#http://pubmed.ncbi.nlm.nih.gov/}"
+  id="${id%/}"
+
+  # Validate: digits only, non-empty
+  if [[ "$id" =~ ^[0-9]+$ ]]; then
+    echo "$id"
+    return 0
+  fi
+
+  err "invalid PubMed ID: $input (expected format: pmid:NNNNN)"
+  return 1
+}
+
+is_pmid_input() {
+  # Returns 0 (true) if input looks like a PubMed reference, non-zero otherwise.
+  local input="$1"
+  [[ "$input" == pmid:* ]] && return 0
+  [[ "$input" == *pubmed.ncbi.nlm.nih.gov* ]] && return 0
+  return 1
+}
+
 ensure_cache_dir() {
   mkdir -p "$CACHE_DIR"
 }
@@ -107,7 +137,20 @@ cmd_get() {
     case "$1" in
       --no-cache) no_cache=true; shift ;;
       --no-refs)  no_refs=true; shift ;;
-      --help|-h)  echo "Usage: paper7 get <id> [--no-refs] [--no-cache]"; return 0 ;;
+      --help|-h)
+        cat <<EOF
+Usage: paper7 get <id> [--no-refs] [--no-cache]
+
+IDs:
+  arXiv   — e.g. 2401.04088 or https://arxiv.org/abs/2401.04088
+  PubMed  — e.g. pmid:38903003
+
+Options:
+  --no-refs     Strip References section (arXiv only; no-op for PubMed)
+  --no-cache    Force re-download, bypassing local cache
+EOF
+        return 0
+        ;;
       -*) err "unknown flag: $1"; return 1 ;;
       *)  input="$1"; shift ;;
     esac
@@ -118,8 +161,26 @@ cmd_get() {
     return 1
   fi
 
+  # Dispatch by input shape
+  if is_pmid_input "$input"; then
+    local pmid
+    pmid=$(parse_pmid "$input") || return 1
+    if [ "$no_refs" = true ]; then
+      info "note: --no-refs has no effect for PubMed abstracts"
+    fi
+    cmd_get_pubmed "$pmid" "$no_cache"
+    return $?
+  fi
+
   local id
   id=$(parse_arxiv_id "$input") || return 1
+  cmd_get_arxiv "$id" "$no_cache" "$no_refs"
+}
+
+cmd_get_arxiv() {
+  local id="$1"
+  local no_cache="$2"
+  local no_refs="$3"
 
   local cache_file="${CACHE_DIR}/${id}/paper.md"
   local meta_file="${CACHE_DIR}/${id}/meta.json"
@@ -245,6 +306,183 @@ META
   else
     cat "$cache_file"
   fi
+}
+
+cmd_get_pubmed() {
+  local pmid="$1"
+  local no_cache="$2"
+
+  local dir="${CACHE_DIR}/pmid-${pmid}"
+  local cache_file="${dir}/paper.md"
+  local meta_file="${dir}/meta.json"
+
+  # Check cache
+  if [ "$no_cache" = false ] && [ -f "$cache_file" ]; then
+    info "cached: $cache_file"
+    cat "$cache_file"
+    return 0
+  fi
+
+  ensure_cache_dir
+  mkdir -p "$dir"
+
+  local xml_file="${dir}/efetch.xml"
+  local url="${PUBMED_EFETCH}?db=pubmed&id=${pmid}&rettype=abstract&retmode=xml&tool=paper7"
+
+  info "fetching PubMed efetch for pmid:${pmid} ..."
+
+  if ! curl -sfL -o "$xml_file" "$url" 2>/dev/null; then
+    rm -rf "$dir"
+    err "failed to reach PubMed (efetch)"
+    return 2
+  fi
+
+  if [ ! -s "$xml_file" ]; then
+    rm -rf "$dir"
+    err "failed to reach PubMed (empty response)"
+    return 2
+  fi
+
+  if ! grep -q '<PubmedArticle[ >]' "$xml_file"; then
+    rm -rf "$dir"
+    err "PubMed returned no article for pmid:${pmid}"
+    return 2
+  fi
+
+  # Flatten XML for regex parsing (strip newlines, collapse whitespace)
+  local flat
+  flat=$(tr '\n' ' ' < "$xml_file" | tr -s ' ')
+
+  # --- Title (stripping any inline tags like <sup>, <i>) ---
+  # Optional extracts tolerate missing fields; each pipe ends with `|| true`.
+  local title
+  title=$(printf '%s' "$flat" \
+    | grep -oE '<ArticleTitle[^>]*>[^<]*(<[^/][^>]*>[^<]*</[^>]+>[^<]*)*</ArticleTitle>' \
+    | head -1 \
+    | sed -E 's|<ArticleTitle[^>]*>||; s|</ArticleTitle>.*||' \
+    | sed -E 's|<[^>]*>||g' \
+    | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' || true)
+  [ -z "$title" ] && title="Unknown Title"
+
+  # --- Authors: concatenate LastName + Initials across <Author> blocks ---
+  local authors
+  authors=$(printf '%s' "$flat" | awk '
+    BEGIN { RS="</Author>"; seen=0 }
+    /<Author[ >]/ {
+      last=""; init=""
+      if (match($0, /<LastName>[^<]*<\/LastName>/)) {
+        last = substr($0, RSTART, RLENGTH)
+        sub(/<LastName>/, "", last); sub(/<\/LastName>/, "", last)
+      }
+      if (match($0, /<Initials>[^<]*<\/Initials>/)) {
+        init = substr($0, RSTART, RLENGTH)
+        sub(/<Initials>/, "", init); sub(/<\/Initials>/, "", init)
+      }
+      if (last != "") {
+        if (seen > 0) printf ", "
+        if (init != "") printf "%s %s", last, init
+        else printf "%s", last
+        seen++
+      }
+    }
+  ')
+  [ -z "$authors" ] && authors="Unknown Authors"
+
+  # --- Journal title (prefer <Journal><Title>; fallback to ISOAbbreviation) ---
+  local journal
+  journal=$(printf '%s' "$flat" \
+    | grep -oE '<Journal>.*</Journal>' | head -1 \
+    | grep -oE '<Title>[^<]*</Title>' | head -1 \
+    | sed -E 's|</?Title>||g' || true)
+  if [ -z "$journal" ]; then
+    journal=$(printf '%s' "$flat" \
+      | grep -oE '<ISOAbbreviation>[^<]*</ISOAbbreviation>' | head -1 \
+      | sed -E 's|</?ISOAbbreviation>||g' || true)
+  fi
+
+  # --- PubDate ---
+  local pubdate_block pubyear pubmonth pubday medline_date pubdate
+  pubdate_block=$(printf '%s' "$flat" | grep -oE '<PubDate>.*</PubDate>' | head -1 || true)
+  pubyear=$(printf '%s' "$pubdate_block" | grep -oE '<Year>[^<]+</Year>' | head -1 | sed -E 's|</?Year>||g' || true)
+  pubmonth=$(printf '%s' "$pubdate_block" | grep -oE '<Month>[^<]+</Month>' | head -1 | sed -E 's|</?Month>||g' || true)
+  pubday=$(printf '%s' "$pubdate_block" | grep -oE '<Day>[^<]+</Day>' | head -1 | sed -E 's|</?Day>||g' || true)
+  medline_date=$(printf '%s' "$pubdate_block" | grep -oE '<MedlineDate>[^<]+</MedlineDate>' | head -1 | sed -E 's|</?MedlineDate>||g' || true)
+  if [ -n "$pubyear" ]; then
+    pubdate="$pubyear"
+    [ -n "$pubmonth" ] && pubdate="${pubdate} ${pubmonth}"
+    [ -n "$pubday" ] && pubdate="${pubdate} ${pubday}"
+  elif [ -n "$medline_date" ]; then
+    pubdate="$medline_date"
+  else
+    pubdate="Unknown"
+  fi
+
+  # --- DOI ---
+  local doi
+  doi=$(printf '%s' "$flat" \
+    | grep -oE '<ArticleId[^>]*IdType="doi"[^>]*>[^<]+</ArticleId>' | head -1 \
+    | sed -E 's|<ArticleId[^>]*>||; s|</ArticleId>||' || true)
+  if [ -z "$doi" ]; then
+    doi=$(printf '%s' "$flat" \
+      | grep -oE '<ELocationID[^>]*EIdType="doi"[^>]*>[^<]+</ELocationID>' | head -1 \
+      | sed -E 's|<ELocationID[^>]*>||; s|</ELocationID>||' || true)
+  fi
+
+  # --- Abstract (may have multiple labeled sections) ---
+  local abstract
+  abstract=$(printf '%s' "$flat" | awk '
+    BEGIN { RS="</AbstractText>"; ORS="" }
+    /<AbstractText/ {
+      if (match($0, /<AbstractText[^>]*>/)) {
+        tag = substr($0, RSTART, RLENGTH)
+        content = substr($0, RSTART + RLENGTH)
+        label = ""
+        if (match(tag, /Label="[^"]*"/)) {
+          label = substr(tag, RSTART+7, RLENGTH-8)
+        }
+        gsub(/<[^>]*>/, "", content)
+        sub(/^ +/, "", content); sub(/ +$/, "", content)
+        if (content != "") {
+          if (label != "") printf "**%s.** %s\n\n", label, content
+          else printf "%s\n\n", content
+        }
+      }
+    }
+  ')
+  [ -z "$abstract" ] && abstract="(no abstract available)"
+
+  # --- Write Markdown ---
+  {
+    echo "# ${title}"
+    echo ""
+    echo "**Authors:** ${authors}"
+    [ -n "$journal" ] && echo "**Journal:** ${journal}"
+    echo "**Published:** ${pubdate}"
+    [ -n "$doi" ] && echo "**DOI:** ${doi}"
+    echo "**PubMed:** ${PUBMED_ARTICLE_URL}/${pmid}/"
+    echo ""
+    echo "---"
+    echo ""
+    echo "## Abstract"
+    echo ""
+    printf '%s\n' "$abstract" | sed 's/[[:space:]]*$//' | awk 'NF||prev{print; prev=NF} !NF{prev=0}'
+  } > "$cache_file"
+
+  # --- meta.json ---
+  local url_value
+  if [ -n "$doi" ]; then
+    url_value="https://doi.org/${doi}"
+  else
+    url_value="${PUBMED_ARTICLE_URL}/${pmid}/"
+  fi
+  cat > "$meta_file" <<META
+{"id":"pmid:${pmid}","title":"$(printf '%s' "$title" | sed 's/"/\\"/g' | head -c 300)","authors":"$(printf '%s' "$authors" | sed 's/"/\\"/g' | head -c 200)","url":"${url_value}"}
+META
+
+  rm -f "$xml_file"
+
+  info "cached: $cache_file"
+  cat "$cache_file"
 }
 
 cmd_search() {
@@ -554,8 +792,13 @@ cmd_list() {
     [ -d "$dir" ] || continue
     has_papers=true
 
-    local id
-    id=$(basename "$dir")
+    local dir_name id
+    dir_name=$(basename "$dir")
+    if [[ "$dir_name" == pmid-* ]]; then
+      id="pmid:${dir_name#pmid-}"
+    else
+      id="$dir_name"
+    fi
     local title="(no title)"
 
     local meta_file="${dir}meta.json"
@@ -588,13 +831,21 @@ cmd_cache() {
     clear)
       local target="${1:-}"
       if [ -n "$target" ]; then
-        local id
-        id=$(parse_arxiv_id "$target") || return 1
-        if [ -d "${CACHE_DIR}/${id}" ]; then
-          rm -rf "${CACHE_DIR}/${id}"
-          echo "Removed paper $id from cache"
+        local canonical dir_name
+        if is_pmid_input "$target"; then
+          local pmid
+          pmid=$(parse_pmid "$target") || return 1
+          canonical="pmid:${pmid}"
+          dir_name="pmid-${pmid}"
         else
-          err "paper $id not in cache"
+          canonical=$(parse_arxiv_id "$target") || return 1
+          dir_name="$canonical"
+        fi
+        if [ -d "${CACHE_DIR}/${dir_name}" ]; then
+          rm -rf "${CACHE_DIR}/${dir_name}"
+          echo "Removed paper ${canonical} from cache"
+        else
+          err "paper ${canonical} not in cache"
           return 1
         fi
       else
