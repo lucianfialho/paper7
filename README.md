@@ -56,6 +56,10 @@ paper7 get 2401.04088 --no-cache               # force re-download
 # Find source code
 paper7 repo 2401.04088
 
+# List references via Semantic Scholar (requires jq)
+paper7 refs 1706.03762 --max 5
+paper7 refs 1706.03762 --json | jq '.data | length'   # pipe raw JSON
+
 # Manage your local knowledge base
 paper7 list                                     # show cached papers
 paper7 cache clear 2401.04088                   # remove one
@@ -88,6 +92,10 @@ paper7 queries one of two sources per search; pick based on the topic:
 - **`pubmed`**: biomedical, clinical, and pharmacological literature. Abstracts only (full text on PMC is a separate pipeline).
 
 PubMed results use a `pmid:` prefix on the ID; arXiv IDs keep the native `YYMM.NNNNN` form. Both coexist in the same local cache.
+
+Semantic Scholar is also wired in as a metadata layer (not a full-paper fetcher): `paper7 refs <id>` lists canonical references, and `paper7 get` enriches its Markdown header with an auto-generated `**TLDR:**` line when one exists.
+
+For per-source endpoints, rate limits, auth, and known gaps see [docs/sources.md](docs/sources.md).
 
 ## Benchmark
 
@@ -158,7 +166,8 @@ paper7 <command> [options]
 
 Commands:
   search <query>       Search papers by keyword (arXiv or PubMed)
-  get <id>             Fetch paper and convert to Markdown
+  get <id>             Fetch paper and convert to Markdown (TLDR via Semantic Scholar)
+  refs <id>            List references via Semantic Scholar (requires jq)
                        id shapes: YYMM.NNNNN (arXiv),
                                   https://arxiv.org/abs/... (arXiv URL),
                                   pmid:NNNNN (PubMed abstract)
@@ -171,10 +180,12 @@ Commands:
 
 Options:
   --source SOURCE      search only — arxiv (default) or pubmed
-  --max N              Max search results (default: 10)
+  --max N              Max search results / references (default: 10)
   --sort relevance|date  Sort search results
   --no-refs            Strip references section (arXiv only; no-op for PubMed)
   --no-cache           Force re-download
+  --no-tldr            Skip Semantic Scholar TLDR enrichment in `get`
+  --json               Emit raw JSON (refs only)
   --help, -h           Show help
   --version, -v        Show version
 ```

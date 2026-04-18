@@ -34,3 +34,4 @@ Each test script prints colored pass/fail lines and exits non-zero on failure
 | `test_pubmed_get.sh` | `paper7 get pmid:NNN` + cache/list integration | #2 |
 | `test_readme_docs.sh` | README + llms.txt document multi-source workflow | #3 |
 | `test_browse.sh` | `paper7 browse` pure helpers + guard paths (interactive fzf part is manual) | #7 |
+| `test_s2.sh` | `paper7 refs` + TLDR enrichment in `get` (skips on S2 rate limit) | #9 |

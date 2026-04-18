@@ -9,6 +9,7 @@ PUBMED_ESEARCH="https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
 PUBMED_ESUMMARY="https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"
 PUBMED_EFETCH="https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
 PUBMED_ARTICLE_URL="https://pubmed.ncbi.nlm.nih.gov"
+SEMANTIC_SCHOLAR_API="https://api.semanticscholar.org/graph/v1"
 
 # Colors (disabled when not a TTY)
 if [ -t 1 ]; then
@@ -37,7 +38,8 @@ ${BOLD}Usage:${RESET}
 
 ${BOLD}Commands:${RESET}
   search <query>       Search papers by keyword (arXiv default; --source pubmed)
-  get <id>             Fetch paper and convert to markdown
+  get <id>             Fetch paper and convert to markdown (TLDR via Semantic Scholar)
+  refs <id>            List references of a paper via Semantic Scholar (requires jq)
   repo <id>            Find GitHub repositories for a paper
   list                 List cached papers in your KB
   cache clear [id]     Clear cache (all or specific paper)
@@ -127,20 +129,86 @@ load_config() {
   PAPER7_VAULT=$(grep '^PAPER7_VAULT=' "$config_file" 2>/dev/null | head -1 | cut -d= -f2- || true)
 }
 
+# --- Semantic Scholar helpers ---
+
+# Hard-fail when jq is missing for commands that require structured JSON parsing.
+s2_check_jq() {
+  if ! command -v jq >/dev/null 2>&1; then
+    err "jq not installed — install with: brew install jq (macOS) or apt install jq (debian/ubuntu)"
+    return 1
+  fi
+}
+
+# Map a paper7 canonical id to Semantic Scholar's externalId URL form.
+# Examples:
+#   1706.03762            -> arXiv:1706.03762
+#   pmid:38903003         -> PMID:38903003
+#   10.48550/arXiv.X      -> DOI:10.48550/arXiv.X    (heuristic: contains /)
+#   <40-char hex paperId> -> passthrough
+s2_paper_id_param() {
+  local input="$1"
+  # PubMed
+  if [[ "$input" == pmid:* ]]; then
+    echo "PMID:${input#pmid:}"
+    return 0
+  fi
+  # arXiv (YYMM.NNNNN, with optional version stripped)
+  if [[ "$input" =~ ^[0-9]{4}\.[0-9]{4,5}(v[0-9]+)?$ ]]; then
+    local stripped="${input%v[0-9]*}"
+    echo "arXiv:${stripped}"
+    return 0
+  fi
+  # arXiv URL
+  if [[ "$input" == *arxiv.org/abs/* ]]; then
+    local id
+    id=$(parse_arxiv_id "$input") || return 1
+    echo "arXiv:${id}"
+    return 0
+  fi
+  # DOI heuristic — contains "/"
+  if [[ "$input" == *"/"* ]]; then
+    echo "DOI:${input}"
+    return 0
+  fi
+  # S2 paperId passthrough (40-char hex)
+  if [[ "$input" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "$input"
+    return 0
+  fi
+  # Last resort: pass as-is and let S2 reject if invalid
+  echo "$input"
+  return 0
+}
+
+# Best-effort TLDR fetch. Echoes the TLDR string on stdout, empty on any failure.
+# Never errors out — caller treats empty string as "no TLDR available".
+fetch_tldr() {
+  local canonical_id="$1"
+  command -v jq >/dev/null 2>&1 || return 0
+  local s2_id
+  s2_id=$(s2_paper_id_param "$canonical_id") || return 0
+  local response
+  response=$(curl -sfL "${SEMANTIC_SCHOLAR_API}/paper/${s2_id}?fields=tldr&tool=paper7" 2>/dev/null) || return 0
+  [ -z "$response" ] && return 0
+  printf '%s' "$response" | jq -r '.tldr.text // ""' 2>/dev/null || true
+}
+
 # --- Commands ---
 
 cmd_get() {
   local no_cache=false
   local no_refs=false
+  local no_tldr=false
   local input=""
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --no-cache) no_cache=true; shift ;;
       --no-refs)  no_refs=true; shift ;;
+      --no-tldr)  no_tldr=true; shift ;;
       --help|-h)
         cat <<EOF
-Usage: paper7 get <id> [--no-refs] [--no-cache]
+Usage: paper7 get <id> [--no-refs] [--no-cache] [--no-tldr]
 
 IDs:
   arXiv   — e.g. 2401.04088 or https://arxiv.org/abs/2401.04088
@@ -149,6 +217,7 @@ IDs:
 Options:
   --no-refs     Strip References section (arXiv only; no-op for PubMed)
   --no-cache    Force re-download, bypassing local cache
+  --no-tldr     Skip the Semantic Scholar TLDR enrichment lookup
 EOF
         return 0
         ;;
@@ -169,19 +238,20 @@ EOF
     if [ "$no_refs" = true ]; then
       info "note: --no-refs has no effect for PubMed abstracts"
     fi
-    cmd_get_pubmed "$pmid" "$no_cache"
+    cmd_get_pubmed "$pmid" "$no_cache" "$no_tldr"
     return $?
   fi
 
   local id
   id=$(parse_arxiv_id "$input") || return 1
-  cmd_get_arxiv "$id" "$no_cache" "$no_refs"
+  cmd_get_arxiv "$id" "$no_cache" "$no_refs" "$no_tldr"
 }
 
 cmd_get_arxiv() {
   local id="$1"
   local no_cache="$2"
   local no_refs="$3"
+  local no_tldr="${4:-false}"
 
   local cache_file="${CACHE_DIR}/${id}/paper.md"
   local meta_file="${CACHE_DIR}/${id}/meta.json"
@@ -234,12 +304,20 @@ cmd_get_arxiv() {
     return 2
   fi
 
+  # Best-effort TLDR enrichment from Semantic Scholar (silent on failure).
+  local tldr=""
+  if [ "$no_tldr" = false ]; then
+    info "fetching TLDR from Semantic Scholar ..."
+    tldr=$(fetch_tldr "$id" || true)
+  fi
+
   # Build markdown: header + converted content
   {
     echo "# ${title}"
     echo ""
     echo "**Authors:** ${authors}"
     echo "**arXiv:** https://arxiv.org/abs/${id}"
+    [ -n "$tldr" ] && echo "**TLDR:** ${tldr}"
     echo ""
     echo "---"
     echo ""
@@ -291,10 +369,16 @@ cmd_get_arxiv() {
       | sed '/^$/{ N; /^\n$/d; }'
   } > "$cache_file"
 
-  # Save metadata
-  cat > "$meta_file" <<META
+  # Save metadata (TLDR included only when present, to keep meta valid otherwise)
+  if [ -n "$tldr" ]; then
+    cat > "$meta_file" <<META
+{"id":"${id}","title":"$(echo "$title" | sed 's/"/\\"/g')","authors":"$(echo "$authors" | sed 's/"/\\"/g' | head -c 200)","tldr":"$(echo "$tldr" | sed 's/"/\\"/g' | tr -d '\n')"}
+META
+  else
+    cat > "$meta_file" <<META
 {"id":"${id}","title":"$(echo "$title" | sed 's/"/\\"/g')","authors":"$(echo "$authors" | sed 's/"/\\"/g' | head -c 200)"}
 META
+  fi
 
   # Clean up raw HTML
   rm -f "$html_file"
@@ -312,6 +396,7 @@ META
 cmd_get_pubmed() {
   local pmid="$1"
   local no_cache="$2"
+  local no_tldr="${3:-false}"
 
   local dir="${CACHE_DIR}/pmid-${pmid}"
   local cache_file="${dir}/paper.md"
@@ -453,6 +538,13 @@ cmd_get_pubmed() {
   [ -z "$abstract" ] && abstract="(no abstract available)"
 
   # --- Write Markdown ---
+  # --- TLDR via Semantic Scholar (best-effort) ---
+  local tldr=""
+  if [ "$no_tldr" = false ]; then
+    info "fetching TLDR from Semantic Scholar ..."
+    tldr=$(fetch_tldr "pmid:${pmid}" || true)
+  fi
+
   {
     echo "# ${title}"
     echo ""
@@ -461,6 +553,7 @@ cmd_get_pubmed() {
     echo "**Published:** ${pubdate}"
     [ -n "$doi" ] && echo "**DOI:** ${doi}"
     echo "**PubMed:** ${PUBMED_ARTICLE_URL}/${pmid}/"
+    [ -n "$tldr" ] && echo "**TLDR:** ${tldr}"
     echo ""
     echo "---"
     echo ""
@@ -476,14 +569,127 @@ cmd_get_pubmed() {
   else
     url_value="${PUBMED_ARTICLE_URL}/${pmid}/"
   fi
-  cat > "$meta_file" <<META
+  if [ -n "$tldr" ]; then
+    cat > "$meta_file" <<META
+{"id":"pmid:${pmid}","title":"$(printf '%s' "$title" | sed 's/"/\\"/g' | head -c 300)","authors":"$(printf '%s' "$authors" | sed 's/"/\\"/g' | head -c 200)","url":"${url_value}","tldr":"$(printf '%s' "$tldr" | sed 's/"/\\"/g' | tr -d '\n')"}
+META
+  else
+    cat > "$meta_file" <<META
 {"id":"pmid:${pmid}","title":"$(printf '%s' "$title" | sed 's/"/\\"/g' | head -c 300)","authors":"$(printf '%s' "$authors" | sed 's/"/\\"/g' | head -c 200)","url":"${url_value}"}
 META
+  fi
 
   rm -f "$xml_file"
 
   info "cached: $cache_file"
   cat "$cache_file"
+}
+
+cmd_refs() {
+  local max_results=10
+  local as_json=false
+  local input=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --max)    max_results="$2"; shift 2 ;;
+      --json)   as_json=true; shift ;;
+      --help|-h)
+        cat <<EOF
+Usage: paper7 refs <id> [--max N] [--json]
+
+Lists the references of a paper via Semantic Scholar.
+
+IDs accepted:
+  arXiv ID    — e.g. 1706.03762 or https://arxiv.org/abs/1706.03762
+  PubMed ID   — e.g. pmid:38903003
+  DOI         — e.g. 10.48550/arXiv.1706.03762
+  S2 paperId  — 40-char hex string
+
+Options:
+  --max N     Max references (default: 10)
+  --json      Emit raw S2 JSON (pipeable)
+
+Requires:
+  jq          for JSON parsing — https://jqlang.github.io/jq/
+EOF
+        return 0
+        ;;
+      -*) err "unknown flag: $1"; return 1 ;;
+      *)  input="$1"; shift ;;
+    esac
+  done
+
+  if [ -z "$input" ]; then
+    err "missing paper ID. Usage: paper7 refs <id>"
+    return 1
+  fi
+
+  s2_check_jq || return 1
+
+  cmd_refs_s2 "$input" "$max_results" "$as_json"
+}
+
+cmd_refs_s2() {
+  local input="$1"
+  local max_results="$2"
+  local as_json="$3"
+
+  local s2_id
+  s2_id=$(s2_paper_id_param "$input") || return 1
+
+  info "fetching references from Semantic Scholar for $s2_id ..."
+
+  local url="${SEMANTIC_SCHOLAR_API}/paper/${s2_id}/references?fields=externalIds,title,authors,year&limit=${max_results}&tool=paper7"
+  local tmp_response
+  tmp_response=$(mktemp)
+
+  local http_code rc
+  http_code=$(curl -sL -o "$tmp_response" -w "%{http_code}" "$url")
+
+  if [ "$http_code" = "404" ]; then
+    rm -f "$tmp_response"
+    err "no paper found for ${input} on Semantic Scholar"
+    return 1
+  fi
+  if [ "$http_code" != "200" ]; then
+    rm -f "$tmp_response"
+    err "failed to reach Semantic Scholar (HTTP ${http_code})"
+    return 2
+  fi
+  if [ ! -s "$tmp_response" ]; then
+    rm -f "$tmp_response"
+    err "failed to reach Semantic Scholar (empty response)"
+    return 2
+  fi
+
+  if [ "$as_json" = true ]; then
+    cat "$tmp_response"
+    rc=$?
+    rm -f "$tmp_response"
+    return $rc
+  fi
+
+  # Pretty print: prefer arxiv > pmid > doi > s2 paperId for the id prefix.
+  jq -r --argjson max "$max_results" '
+    def pick_id(ids; pid):
+      if (ids.ArXiv // null)    then "arxiv:" + ids.ArXiv
+      elif (ids.PubMed // null) then "pmid:" + (ids.PubMed | tostring)
+      elif (ids.DOI // null)    then "doi:" + ids.DOI
+      else "s2:" + (pid // "unknown")
+      end;
+
+    .data[0:$max][] | .citedPaper as $p
+    | "  [" + pick_id($p.externalIds // {}; $p.paperId) + "]  "
+        + ($p.title // "(no title)")
+    + "\n  "
+        + ([$p.authors[]?.name // empty] | map(split(" ") | last)[0:5] | join(", ") | .[0:60])
+        + (if $p.year then " (" + ($p.year|tostring) + ")" else "" end)
+    + "\n"
+  ' < "$tmp_response"
+  rc=$?
+  rm -f "$tmp_response"
+  return $rc
 }
 
 cmd_search() {
@@ -1171,6 +1377,7 @@ main() {
     cache)      cmd_cache "$@" ;;
     vault)      cmd_vault "$@" ;;
     browse)     cmd_browse "$@" ;;
+    refs)       cmd_refs "$@" ;;
     help|--help|-h)  usage ;;
     --version|-v)    echo "paper7 $VERSION" ;;
     *)
