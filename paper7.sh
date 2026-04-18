@@ -44,6 +44,7 @@ ${BOLD}Commands:${RESET}
   vault init <path>    Configure Obsidian-compatible vault path
   vault <id>           Export paper to vault as Obsidian-ready Markdown
   vault all            Export all cached papers to vault
+  browse               Interactive picker over the local cache (requires fzf)
   help                 Show this help
 
 ${BOLD}Options:${RESET}
@@ -1045,6 +1046,112 @@ EOF
   esac
 }
 
+# List cached papers as tab-separated rows for fzf piping and test assertions.
+# Format: <canonical_id>\t<title>\t<cache_dir>
+list_browse_entries() {
+  ensure_cache_dir
+  for dir in "${CACHE_DIR}"/*/; do
+    [ -d "$dir" ] || continue
+    local dir_name id
+    dir_name=$(basename "$dir")
+    if [[ "$dir_name" == pmid-* ]]; then
+      id="pmid:${dir_name#pmid-}"
+    else
+      id="$dir_name"
+    fi
+    local meta_file="${dir}meta.json"
+    local title="(no title)"
+    if [ -f "$meta_file" ]; then
+      local extracted
+      extracted=$(grep -o '"title":"[^"]*"' "$meta_file" 2>/dev/null | sed 's/"title":"//;s/"$//' | head -1 || true)
+      [ -n "$extracted" ] && title="$extracted"
+    fi
+    # Strip any literal tabs that might have landed in title, to keep FS invariants
+    title="${title//$'\t'/ }"
+    printf '%s\t%s\t%s\n' "$id" "$title" "${dir%/}"
+  done
+}
+
+# Render a cached paper through glow if available, else less -R.
+render_paper() {
+  local id="$1"
+  local dir_name
+  if [[ "$id" == pmid:* ]]; then
+    dir_name="pmid-${id#pmid:}"
+  else
+    dir_name="$id"
+  fi
+  local cache_file="${CACHE_DIR}/${dir_name}/paper.md"
+  if [ ! -f "$cache_file" ]; then
+    err "not cached: $id"
+    return 1
+  fi
+
+  if command -v glow >/dev/null 2>&1; then
+    glow -p "$cache_file"
+  elif command -v less >/dev/null 2>&1; then
+    less -R "$cache_file"
+  else
+    cat "$cache_file"
+  fi
+}
+
+cmd_browse() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --help|-h)
+        cat <<EOF
+Usage: paper7 browse
+
+Opens an fzf picker over cached papers (arXiv + PubMed). Enter renders
+the selected paper via glow (falls back to less). Esc quits.
+
+Requirements:
+  fzf       required — https://github.com/junegunn/fzf
+  glow      recommended — https://github.com/charmbracelet/glow
+            (if missing, less -R is used as fallback)
+
+Cache lives at ~/.paper7/cache/. Populate it with 'paper7 get <id>'.
+EOF
+        return 0
+        ;;
+      -*) err "unknown flag: $1"; return 1 ;;
+      *)  err "unexpected argument: $1"; return 1 ;;
+    esac
+  done
+
+  if ! command -v fzf >/dev/null 2>&1; then
+    err "fzf not installed — install with: brew install fzf (macOS) or apt install fzf (debian/ubuntu)"
+    return 1
+  fi
+
+  ensure_cache_dir
+  local entries
+  entries=$(list_browse_entries)
+  if [ -z "$entries" ]; then
+    echo "No papers cached. Run 'paper7 get <id>' or 'paper7 search <query>' first."
+    return 0
+  fi
+
+  local selected
+  # fzf preview: {3} is the cache dir column. Show head of paper.md.
+  # `|| true` so Esc (exit 130) doesn't trip set -e in the caller.
+  selected=$(printf '%s\n' "$entries" | fzf \
+    --delimiter=$'\t' \
+    --with-nth=2 \
+    --preview='head -40 {3}/paper.md' \
+    --preview-window='right:60%:wrap' \
+    --header='Enter: read | Esc: quit' \
+    --ansi \
+    || true)
+
+  [ -z "$selected" ] && return 0
+
+  local id
+  id=$(printf '%s' "$selected" | cut -f1)
+  render_paper "$id"
+}
+
 # --- Main ---
 
 main() {
@@ -1063,6 +1170,7 @@ main() {
     list)       cmd_list ;;
     cache)      cmd_cache "$@" ;;
     vault)      cmd_vault "$@" ;;
+    browse)     cmd_browse "$@" ;;
     help|--help|-h)  usage ;;
     --version|-v)    echo "paper7 $VERSION" ;;
     *)
@@ -1074,4 +1182,6 @@ main() {
   esac
 }
 
-main "$@"
+if [ "${PAPER7_NO_MAIN:-0}" = "0" ]; then
+  main "$@"
+fi

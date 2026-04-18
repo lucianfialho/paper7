@@ -66,6 +66,9 @@ paper7 vault init ~/Documents/ArxivVault        # configure vault path once
 paper7 vault 2401.04088                         # export one paper
 paper7 vault all                                # export every cached paper
 
+# Browse the local cache interactively (requires fzf; glow recommended)
+paper7 browse                                   # fzf picker + preview; Enter renders, Esc quits
+
 # Pipe to anything
 paper7 get 2401.04088 | claude "explain this"   # Claude Code
 paper7 get 2401.04088 | llm "summarize"         # simon willison's llm
@@ -164,6 +167,7 @@ Commands:
   cache clear [id]     Clear cache (all, or a specific arXiv/pmid id)
   vault init <path>    Configure Obsidian-compatible vault
   vault <id>|all       Export arXiv paper(s) to vault with frontmatter + wikilinks
+  browse               Interactive fzf picker over the local cache (glow renderer)
 
 Options:
   --source SOURCE      search only — arxiv (default) or pubmed
