@@ -5,6 +5,8 @@ VERSION="0.1.0"
 CACHE_DIR="${HOME}/.paper7/cache"
 AR5IV_URL="https://ar5iv.labs.arxiv.org/html"
 ARXIV_API="http://export.arxiv.org/api/query"
+PUBMED_ESEARCH="https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
+PUBMED_ESUMMARY="https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"
 
 # Colors (disabled when not a TTY)
 if [ -t 1 ]; then
@@ -32,7 +34,7 @@ ${BOLD}Usage:${RESET}
   paper7 <command> [options]
 
 ${BOLD}Commands:${RESET}
-  search <query>       Search papers by keyword
+  search <query>       Search papers by keyword (arXiv default; --source pubmed)
   get <id>             Fetch paper and convert to markdown
   repo <id>            Find GitHub repositories for a paper
   list                 List cached papers in your KB
@@ -48,6 +50,7 @@ ${BOLD}Options:${RESET}
 
 ${BOLD}Examples:${RESET}
   paper7 search "mixture of experts"
+  paper7 search "psilocybin hypertension" --source pubmed --max 5
   paper7 get 2401.04088
   paper7 get 2401.04088 --no-refs
   paper7 get https://arxiv.org/abs/2401.04088
@@ -247,13 +250,29 @@ META
 cmd_search() {
   local max_results=10
   local sort_by="relevance"
+  local source="arxiv"
   local query=""
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --max)    max_results="$2"; shift 2 ;;
       --sort)   sort_by="$2"; shift 2 ;;
-      --help|-h) echo "Usage: paper7 search <query> [--max N] [--sort relevance|date]"; return 0 ;;
+      --source) source="$2"; shift 2 ;;
+      --help|-h)
+        cat <<EOF
+Usage: paper7 search <query> [--source arxiv|pubmed] [--max N] [--sort relevance|date]
+
+Options:
+  --source SOURCE   Data source: arxiv (default) or pubmed
+  --max N           Max results (default: 10)
+  --sort KEY        relevance (default) or date
+
+Examples:
+  paper7 search "mixture of experts"
+  paper7 search "psilocybin hypertension" --source pubmed --max 5
+EOF
+        return 0
+        ;;
       -*) err "unknown flag: $1"; return 1 ;;
       *)  query="$1"; shift ;;
     esac
@@ -263,6 +282,18 @@ cmd_search() {
     err "missing search query. Usage: paper7 search <query>"
     return 1
   fi
+
+  case "$source" in
+    arxiv)  cmd_search_arxiv  "$query" "$max_results" "$sort_by" ;;
+    pubmed) cmd_search_pubmed "$query" "$max_results" "$sort_by" ;;
+    *)      err "unknown source: $source (use arxiv or pubmed)"; return 1 ;;
+  esac
+}
+
+cmd_search_arxiv() {
+  local query="$1"
+  local max_results="$2"
+  local sort_by="$3"
 
   local sort_param="relevance"
   [ "$sort_by" = "date" ] && sort_param="submittedDate"
@@ -335,6 +366,133 @@ cmd_search() {
       }
     }
     { entry++ }
+  '
+}
+
+cmd_search_pubmed() {
+  local query="$1"
+  local max_results="$2"
+  local sort_by="$3"
+
+  local encoded_query
+  encoded_query=$(echo "$query" | sed 's/ /+/g')
+
+  local sort_param=""
+  [ "$sort_by" = "date" ] && sort_param="&sort=pub+date"
+
+  info "searching PubMed for: $query ..."
+
+  # Step 1: esearch → list of PubMed IDs
+  local esearch_url="${PUBMED_ESEARCH}?db=pubmed&term=${encoded_query}&retmax=${max_results}${sort_param}&tool=paper7"
+  local esearch_response
+  esearch_response=$(curl -sfL "$esearch_url" 2>/dev/null) || {
+    err "failed to reach PubMed (esearch)"
+    return 2
+  }
+
+  if [ -z "$esearch_response" ]; then
+    err "failed to reach PubMed (empty esearch response)"
+    return 2
+  fi
+
+  local total
+  total=$(echo "$esearch_response" | grep -o '<Count>[0-9]*</Count>' | head -1 | grep -o '[0-9]*')
+  [ -z "$total" ] && total=0
+
+  if [ "$total" = "0" ]; then
+    echo "No papers found for: $query"
+    return 0
+  fi
+
+  local ids
+  ids=$(echo "$esearch_response" | grep -o '<Id>[0-9]*</Id>' | grep -o '[0-9]*' | tr '\n' ',' | sed 's/,$//')
+
+  if [ -z "$ids" ]; then
+    err "PubMed returned no IDs despite non-zero count"
+    return 2
+  fi
+
+  # Step 2: esummary → metadata for each ID
+  local esummary_url="${PUBMED_ESUMMARY}?db=pubmed&id=${ids}&tool=paper7"
+  local esummary_response
+  esummary_response=$(curl -sfL "$esummary_url" 2>/dev/null) || {
+    err "failed to reach PubMed (esummary)"
+    return 2
+  }
+
+  if [ -z "$esummary_response" ]; then
+    err "failed to reach PubMed (empty esummary response)"
+    return 2
+  fi
+
+  echo -e "${BOLD}Found ${total} papers (showing ${max_results}):${RESET}"
+  echo ""
+
+  # Parse each DocSum and emit "[pmid:NNN] title\n  authors (date)\n"
+  echo "$esummary_response" | awk '
+    function month_num(m,   map) {
+      map["Jan"]="01"; map["Feb"]="02"; map["Mar"]="03"; map["Apr"]="04"
+      map["May"]="05"; map["Jun"]="06"; map["Jul"]="07"; map["Aug"]="08"
+      map["Sep"]="09"; map["Oct"]="10"; map["Nov"]="11"; map["Dec"]="12"
+      return (m in map) ? map[m] : ""
+    }
+    function normalize_date(raw,   parts, n, mm, dd) {
+      # Inputs seen: "2024 Jan 15", "2024 Jan", "2024", "2024-05-01"
+      if (raw ~ /^[0-9]{4}-[0-9]{2}-[0-9]{2}/) return substr(raw, 1, 10)
+      n = split(raw, parts, /[ \-\/]+/)
+      if (n == 0 || parts[1] !~ /^[0-9]{4}$/) return raw
+      if (n == 1) return parts[1]
+      mm = month_num(parts[2])
+      if (mm == "") {
+        if (parts[2] ~ /^[0-9]{1,2}$/) mm = sprintf("%02d", parts[2])
+        else return raw
+      }
+      if (n == 2) return parts[1] "-" mm
+      dd = (parts[3] ~ /^[0-9]{1,2}$/) ? sprintf("%02d", parts[3]) : "01"
+      return parts[1] "-" mm "-" dd
+    }
+    BEGIN { RS="</DocSum>"; first=1 }
+    /<DocSum>/ {
+      flat=$0
+      gsub(/\n/, " ", flat)
+      gsub(/[[:space:]]+/, " ", flat)
+
+      pmid=""; title=""; pubdate=""; authors=""
+
+      if (match(flat, /<Id>[0-9]+<\/Id>/)) {
+        pmid = substr(flat, RSTART+4, RLENGTH-9)
+      }
+
+      if (match(flat, /<Item Name="Title"[^>]*>[^<]*<\/Item>/)) {
+        tchunk = substr(flat, RSTART, RLENGTH)
+        sub(/<Item Name="Title"[^>]*>/, "", tchunk)
+        sub(/<\/Item>/, "", tchunk)
+        title = tchunk
+      }
+
+      if (match(flat, /<Item Name="PubDate"[^>]*>[^<]*<\/Item>/)) {
+        pchunk = substr(flat, RSTART, RLENGTH)
+        sub(/<Item Name="PubDate"[^>]*>/, "", pchunk)
+        sub(/<\/Item>/, "", pchunk)
+        pubdate = normalize_date(pchunk)
+      }
+
+      tmp = flat
+      while (match(tmp, /<Item Name="Author" Type="String">[^<]*<\/Item>/)) {
+        achunk = substr(tmp, RSTART, RLENGTH)
+        sub(/<Item Name="Author" Type="String">/, "", achunk)
+        sub(/<\/Item>/, "", achunk)
+        if (authors != "") authors = authors ", "
+        authors = authors achunk
+        tmp = substr(tmp, RSTART + RLENGTH)
+      }
+
+      if (pmid != "") {
+        gsub(/^ +| +$/, "", title)
+        if (length(authors) > 60) authors = substr(authors, 1, 57) "..."
+        printf "  [pmid:%s] %s\n  %s (%s)\n\n", pmid, title, authors, pubdate
+      }
+    }
   '
 }
 
