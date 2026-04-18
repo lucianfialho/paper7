@@ -40,12 +40,16 @@ After installing, try prompts like:
 ## Usage
 
 ```bash
-# Search arXiv
+# Search arXiv (default)
 paper7 search "mixture of experts" --max 5
 
+# Search PubMed (biomedical, clinical, pharmacological)
+paper7 search "psilocybin hypertension" --source pubmed --max 5
+
 # Fetch a paper as clean Markdown
-paper7 get 2401.04088
+paper7 get 2401.04088                          # arXiv
 paper7 get https://arxiv.org/abs/2401.04088
+paper7 get pmid:38903003                       # PubMed (abstract only)
 paper7 get 2401.04088 --no-refs                # strip references
 paper7 get 2401.04088 --no-cache               # force re-download
 
@@ -67,7 +71,20 @@ paper7 get 2401.04088 | claude "explain this"   # Claude Code
 paper7 get 2401.04088 | llm "summarize"         # simon willison's llm
 paper7 get 2401.04088 | pbcopy                  # clipboard (macOS)
 paper7 get 2401.04088 --no-refs > paper.md      # save to file
+
+# End-to-end: search PubMed, then fetch and summarize
+paper7 search "psilocybin hypertension" --source pubmed --max 3
+paper7 get pmid:38903003 | claude "summarize the clinical case"
 ```
+
+## Sources
+
+paper7 queries one of two sources per search; pick based on the topic:
+
+- **`arxiv`** (default): physics, computer science, machine learning, math, quantitative biology. Full-text available.
+- **`pubmed`**: biomedical, clinical, and pharmacological literature. Abstracts only (full text on PMC is a separate pipeline).
+
+PubMed results use a `pmid:` prefix on the ID; arXiv IDs keep the native `YYMM.NNNNN` form. Both coexist in the same local cache.
 
 ## Benchmark
 
@@ -128,18 +145,22 @@ The clean-text-over-raw-PDF approach is backed by academic research. See [`examp
 paper7 <command> [options]
 
 Commands:
-  search <query>       Search arXiv papers by keyword
+  search <query>       Search papers by keyword (arXiv or PubMed)
   get <id>             Fetch paper and convert to Markdown
-  repo <id>            Find GitHub repositories for a paper
-  list                 List cached papers
-  cache clear [id]     Clear cache (all or specific paper)
+                       id shapes: YYMM.NNNNN (arXiv),
+                                  https://arxiv.org/abs/... (arXiv URL),
+                                  pmid:NNNNN (PubMed abstract)
+  repo <id>            Find GitHub repositories for an arXiv paper
+  list                 List cached papers (arXiv + PubMed)
+  cache clear [id]     Clear cache (all, or a specific arXiv/pmid id)
   vault init <path>    Configure Obsidian-compatible vault
-  vault <id>|all       Export paper(s) to vault with frontmatter + wikilinks
+  vault <id>|all       Export arXiv paper(s) to vault with frontmatter + wikilinks
 
 Options:
+  --source SOURCE      search only — arxiv (default) or pubmed
   --max N              Max search results (default: 10)
   --sort relevance|date  Sort search results
-  --no-refs            Strip references section
+  --no-refs            Strip references section (arXiv only; no-op for PubMed)
   --no-cache           Force re-download
   --help, -h           Show help
   --version, -v        Show version
