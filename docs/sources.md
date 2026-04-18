@@ -118,6 +118,75 @@ Optional. Currently no env var hookup; planned as a follow-up issue if rate limi
 
 ---
 
+## Crossref
+
+### Purpose
+Universal DOI resolver. paper7 uses Crossref to fetch metadata + abstract for any paper with a DOI — preprints (bioRxiv, medRxiv, PsyArXiv, etc.), journal articles, and book chapters that publishers register. The entry point is `paper7 get doi:<DOI>`.
+
+### Endpoints used
+
+| Endpoint | Used for | Notes |
+|---|---|---|
+| `https://api.crossref.org/works/{DOI}?mailto=paper7@example.com` | `paper7 get doi:<DOI>` | Returns metadata: `title`, `author[]`, `institution`, `publisher`, `issued`, `URL`, `resource.primary.URL`, and `abstract` (when present, wrapped in JATS XML). |
+
+The `mailto` query param puts paper7 into Crossref's "polite pool" — recommended courtesy that gets faster, more reliable responses than the default pool.
+
+### Response format
+JSON. Parsed with `jq`. paper7 reuses the same `s2_check_jq` guard already in place for Semantic Scholar — `jq` becomes a hard dep for any `paper7 get doi:` invocation.
+
+### Rate limits
+Generous — Crossref's polite pool has no published hard cap; their etiquette guide asks ~50 requests/sec/IP as a soft ceiling. paper7 makes one `GET` per `paper7 get doi:` invocation, well within safe usage.
+
+### Auth
+None required. No API key. The hardcoded `mailto` in `paper7.sh` (`paper7@example.com`) is acceptable for the polite pool — Crossref doesn't validate the email, just records it for accountability if abuse patterns emerge.
+
+### Known gaps
+- Abstracts come wrapped in JATS XML (`<jats:p>`, `<jats:italic>`, etc.). paper7 strips the tags but the formatting can be uneven across publishers.
+- Crossref doesn't host full text — `paper7 get doi:` always returns metadata + abstract only. The Markdown header includes a `**Full text:**` link to the publisher/preprint server.
+- Some journal DOIs have no abstract in Crossref (publisher didn't deposit it). paper7 emits a placeholder `(no abstract available; full text at <URL>)`.
+- DOI URL form (`https://doi.org/...`) is not yet accepted as input — only the bare `doi:10.XXXX/...` prefix.
+
+### Upstream docs
+- API reference: https://api.crossref.org/swagger-ui/index.html
+- Etiquette guide: https://www.crossref.org/documentation/retrieve-metadata/rest-api/tips-for-using-the-rest-api/
+- DOI handbook: https://www.doi.org/the-identifier/resources/handbook/
+
+---
+
+## bioRxiv / medRxiv
+
+### Purpose
+Preprint servers for biology (bioRxiv) and medical/clinical sciences (medRxiv). Both share DOI prefix `10.1101/` and are operated by openRxiv. paper7 surfaces their preprints via the DOI fetch path documented above (Crossref).
+
+### Endpoints used
+
+paper7 does **not** call bioRxiv/medRxiv APIs directly. Resolution happens entirely through Crossref; the result is detected as bioRxiv/medRxiv via Crossref's `institution[0].name` field, and the `**Full text:**` line in the rendered Markdown points to:
+
+| Source | Full-text URL pattern |
+|---|---|
+| bioRxiv | `https://www.biorxiv.org/content/{DOI}.full` |
+| medRxiv | `https://www.medrxiv.org/content/{DOI}.full` |
+
+### Response format
+N/A — paper7 doesn't parse bioRxiv responses (see Known gaps below).
+
+### Rate limits
+N/A.
+
+### Auth
+N/A.
+
+### Known gaps
+- **bioRxiv/medRxiv block direct programmatic HTTP access.** Their HTML pages return HTTP 403 to `curl` requests regardless of `User-Agent` (Cloudflare with a JavaScript challenge). The original plan to fetch full text from `biorxiv.org/content/{DOI}.full` and convert it to Markdown was dropped — pure-bash + `curl` cannot pass the challenge. paper7 returns abstract-only via Crossref instead, with a `**Full text:**` link the user opens in a browser when needed.
+- bioRxiv has its own JSON API at `https://api.biorxiv.org/details/biorxiv/{DOI}` — useful for date-range listings but doesn't provide full text either, and Crossref already covers metadata. paper7 doesn't currently call it.
+- bioRxiv has **no public keyword-search API**. For biomed search, use `paper7 search --source pubmed` (which covers ~all peer-reviewed biomed plus a growing share of preprints once they're indexed in PubMed).
+
+### Upstream docs
+- bioRxiv API: https://api.biorxiv.org/
+- About openRxiv: https://www.openrxiv.org/
+
+---
+
 ## Adding a new source
 
 Use this template for the next source (bioRxiv, OpenAlex, etc.):

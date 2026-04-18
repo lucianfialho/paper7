@@ -10,6 +10,10 @@ PUBMED_ESUMMARY="https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"
 PUBMED_EFETCH="https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
 PUBMED_ARTICLE_URL="https://pubmed.ncbi.nlm.nih.gov"
 SEMANTIC_SCHOLAR_API="https://api.semanticscholar.org/graph/v1"
+CROSSREF_API="https://api.crossref.org/works"
+CROSSREF_MAILTO="paper7@example.com"
+BIORXIV_HTML_URL="https://www.biorxiv.org/content"
+MEDRXIV_HTML_URL="https://www.medrxiv.org/content"
 
 # Colors (disabled when not a TTY)
 if [ -t 1 ]; then
@@ -39,6 +43,7 @@ ${BOLD}Usage:${RESET}
 ${BOLD}Commands:${RESET}
   search <query>       Search papers by keyword (arXiv default; --source pubmed)
   get <id>             Fetch paper and convert to markdown (TLDR via Semantic Scholar)
+                       id shapes: arXiv (YYMM.NNNNN), pmid:NNN, doi:10.XXXX/...
   refs <id>            List references of a paper via Semantic Scholar (requires jq)
   repo <id>            Find GitHub repositories for a paper
   list                 List cached papers in your KB
@@ -116,6 +121,31 @@ is_pmid_input() {
   [[ "$input" == pmid:* ]] && return 0
   [[ "$input" == *pubmed.ncbi.nlm.nih.gov* ]] && return 0
   return 1
+}
+
+# Returns 0 if input looks like a DOI reference (must start with "doi:" prefix).
+is_doi_input() {
+  local input="$1"
+  [[ "$input" == doi:* ]] && return 0
+  return 1
+}
+
+# Validates and canonicalizes a DOI. Strips "doi:" prefix.
+parse_doi() {
+  local input="$1"
+  local id="${input#doi:}"
+  if [[ "$id" =~ ^10\.[0-9]{4,9}/.+$ ]]; then
+    echo "$id"
+    return 0
+  fi
+  err "invalid DOI: $input (expected format: doi:10.XXXX/...)"
+  return 1
+}
+
+# Convert canonical DOI to filesystem-safe directory suffix.
+doi_to_dir_suffix() {
+  local doi="$1"
+  echo "${doi//\//_}"
 }
 
 ensure_cache_dir() {
@@ -231,7 +261,18 @@ EOF
     return 1
   fi
 
-  # Dispatch by input shape
+  # Dispatch by input shape — check DOI first (more specific prefix),
+  # then PMID, then fall through to arXiv.
+  if is_doi_input "$input"; then
+    local doi
+    doi=$(parse_doi "$input") || return 1
+    if [ "$no_refs" = true ]; then
+      info "note: --no-refs has no effect for DOI fetches"
+    fi
+    cmd_get_doi "$doi" "$no_cache" "$no_tldr"
+    return $?
+  fi
+
   if is_pmid_input "$input"; then
     local pmid
     pmid=$(parse_pmid "$input") || return 1
@@ -580,6 +621,160 @@ META
   fi
 
   rm -f "$xml_file"
+
+  info "cached: $cache_file"
+  cat "$cache_file"
+}
+
+cmd_get_doi() {
+  local doi="$1"
+  local no_cache="$2"
+  local no_tldr="${3:-false}"
+
+  # Auto-redirect arXiv DOIs (10.48550/arXiv.YYMM.NNNNN) → cmd_get_arxiv,
+  # so they share the existing arXiv cache and don't duplicate.
+  if [[ "$doi" =~ ^10\.48550/arXiv\.([0-9]{4}\.[0-9]{4,5})$ ]]; then
+    local arxiv_id="${BASH_REMATCH[1]}"
+    info "DOI is arXiv mirror; redirecting to arXiv path for $arxiv_id"
+    cmd_get_arxiv "$arxiv_id" "$no_cache" "false" "$no_tldr"
+    return $?
+  fi
+
+  s2_check_jq || return 1
+
+  local dir_suffix
+  dir_suffix=$(doi_to_dir_suffix "$doi")
+  local dir="${CACHE_DIR}/doi-${dir_suffix}"
+  local cache_file="${dir}/paper.md"
+  local meta_file="${dir}/meta.json"
+
+  # Cache hit
+  if [ "$no_cache" = false ] && [ -f "$cache_file" ]; then
+    info "cached: $cache_file"
+    cat "$cache_file"
+    return 0
+  fi
+
+  ensure_cache_dir
+  mkdir -p "$dir"
+
+  info "fetching Crossref metadata for doi:${doi} ..."
+
+  local tmp_response http_code
+  tmp_response=$(mktemp)
+  http_code=$(curl -sL -o "$tmp_response" -w "%{http_code}" \
+    "${CROSSREF_API}/${doi}?mailto=${CROSSREF_MAILTO}")
+
+  if [ "$http_code" = "404" ]; then
+    rm -rf "$dir" "$tmp_response"
+    err "DOI not found in Crossref: ${doi}"
+    return 1
+  fi
+  if [ "$http_code" != "200" ]; then
+    rm -rf "$dir" "$tmp_response"
+    err "failed to reach Crossref (HTTP ${http_code})"
+    return 2
+  fi
+  if [ ! -s "$tmp_response" ]; then
+    rm -rf "$dir" "$tmp_response"
+    err "failed to reach Crossref (empty response)"
+    return 2
+  fi
+
+  # Extract fields
+  local title authors source year published full_text_url abstract_raw
+  title=$(jq -r '.message.title[0] // "Unknown Title"' < "$tmp_response")
+  authors=$(jq -r '
+    [.message.author[]? | (.given // "") + " " + (.family // "") | gsub("^ +| +$"; "")]
+    | join(", ")
+    | .[0:200]
+  ' < "$tmp_response")
+  [ -z "$authors" ] && authors="Unknown Authors"
+
+  source=$(jq -r '
+    (.message.institution[0].name // .message.publisher // "Unknown source")
+  ' < "$tmp_response")
+
+  year=$(jq -r '
+    (.message.issued."date-parts"[0][0] // .message.created."date-parts"[0][0] // "Unknown") | tostring
+  ' < "$tmp_response")
+
+  published=$(jq -r '
+    (.message.issued."date-parts"[0] // [])
+    | if length >= 3 then
+        (.[0]|tostring) + "-" + (.[1]|tostring|("00"+.) | .[-2:]) + "-" + (.[2]|tostring|("00"+.) | .[-2:])
+      elif length == 2 then
+        (.[0]|tostring) + "-" + (.[1]|tostring|("00"+.) | .[-2:])
+      elif length == 1 then
+        (.[0]|tostring)
+      else "Unknown" end
+  ' < "$tmp_response")
+
+  # Full-text URL: prefer institution-specific URL when bioRxiv/medRxiv,
+  # otherwise the resource URL from Crossref, otherwise doi.org redirect.
+  case "$source" in
+    bioRxiv) full_text_url="${BIORXIV_HTML_URL}/${doi}.full" ;;
+    medRxiv) full_text_url="${MEDRXIV_HTML_URL}/${doi}.full" ;;
+    *)       full_text_url=$(jq -r '
+               (.message.URL // (.message.resource.primary.URL // ("https://doi.org/" + .message.DOI)))
+             ' < "$tmp_response") ;;
+  esac
+
+  abstract_raw=$(jq -r '.message.abstract // ""' < "$tmp_response")
+
+  rm -f "$tmp_response"
+
+  # Clean JATS XML out of abstract (best-effort; falls back to placeholder).
+  local abstract
+  if [ -n "$abstract_raw" ]; then
+    abstract=$(printf '%s' "$abstract_raw" \
+      | sed -E 's|<jats:title>[^<]*</jats:title>||g' \
+      | sed -E 's|<jats:p>|\n\n|g; s|</jats:p>||g' \
+      | sed -E 's|<jats:[^>]+>||g; s|</jats:[^>]+>||g' \
+      | sed -E 's|<[^>]+>||g' \
+      | sed -E 's|&amp;|\&|g; s|&lt;|<|g; s|&gt;|>|g; s|&quot;|"|g; s|&nbsp;| |g' \
+      | awk 'NF || prev { print; prev = NF } !NF { prev = 0 }' \
+      | sed 's/[[:space:]]*$//')
+  fi
+  if [ -z "$abstract" ]; then
+    abstract="(no abstract available; full text at ${full_text_url})"
+  fi
+
+  # TLDR via Semantic Scholar (best-effort)
+  local tldr=""
+  if [ "$no_tldr" = false ]; then
+    info "fetching TLDR from Semantic Scholar ..."
+    tldr=$(fetch_tldr "doi:${doi}" || true)
+  fi
+
+  # Write paper.md
+  {
+    echo "# ${title}"
+    echo ""
+    echo "**Authors:** ${authors}"
+    echo "**Source:** ${source}"
+    echo "**Published:** ${published}"
+    echo "**DOI:** ${doi}"
+    echo "**Full text:** ${full_text_url}"
+    [ -n "$tldr" ] && echo "**TLDR:** ${tldr}"
+    echo ""
+    echo "---"
+    echo ""
+    echo "## Abstract"
+    echo ""
+    printf '%s\n' "$abstract"
+  } > "$cache_file"
+
+  # Write meta.json
+  if [ -n "$tldr" ]; then
+    cat > "$meta_file" <<META
+{"id":"doi:${doi}","title":"$(printf '%s' "$title" | sed 's/"/\\"/g' | head -c 300)","authors":"$(printf '%s' "$authors" | sed 's/"/\\"/g' | head -c 200)","url":"${full_text_url}","tldr":"$(printf '%s' "$tldr" | sed 's/"/\\"/g' | tr -d '\n')"}
+META
+  else
+    cat > "$meta_file" <<META
+{"id":"doi:${doi}","title":"$(printf '%s' "$title" | sed 's/"/\\"/g' | head -c 300)","authors":"$(printf '%s' "$authors" | sed 's/"/\\"/g' | head -c 200)","url":"${full_text_url}"}
+META
+  fi
 
   info "cached: $cache_file"
   cat "$cache_file"
@@ -1001,18 +1196,30 @@ cmd_list() {
 
     local dir_name id
     dir_name=$(basename "$dir")
-    if [[ "$dir_name" == pmid-* ]]; then
-      id="pmid:${dir_name#pmid-}"
-    else
-      id="$dir_name"
-    fi
     local title="(no title)"
-
     local meta_file="${dir}meta.json"
+    # Prefer id from meta.json (round-trip-safe — handles DOIs with _).
+    # Fall back to dir-name canonicalization if meta is missing/incomplete.
+    local meta_id=""
     if [ -f "$meta_file" ]; then
+      meta_id=$(grep -o '"id":"[^"]*"' "$meta_file" | sed 's/"id":"//;s/"$//' | head -1 || true)
       local extracted
       extracted=$(grep -o '"title":"[^"]*"' "$meta_file" | sed 's/"title":"//;s/"$//' | head -1)
       [ -n "$extracted" ] && title="$extracted"
+    fi
+
+    if [ -n "$meta_id" ]; then
+      id="$meta_id"
+    elif [[ "$dir_name" == pmid-* ]]; then
+      id="pmid:${dir_name#pmid-}"
+    elif [[ "$dir_name" == doi-* ]]; then
+      # Lossy fallback when meta.json is missing — DOIs containing literal '_'
+      # would round-trip incorrectly. paper7 always writes meta.json so this
+      # branch only triggers for hand-corrupted caches.
+      id="doi:${dir_name#doi-}"
+      id="${id//_/\/}"
+    else
+      id="$dir_name"
     fi
 
     echo -e "  ${CYAN}${id}${RESET}  ${title}"
@@ -1039,7 +1246,12 @@ cmd_cache() {
       local target="${1:-}"
       if [ -n "$target" ]; then
         local canonical dir_name
-        if is_pmid_input "$target"; then
+        if is_doi_input "$target"; then
+          local doi
+          doi=$(parse_doi "$target") || return 1
+          canonical="doi:${doi}"
+          dir_name="doi-$(doi_to_dir_suffix "$doi")"
+        elif is_pmid_input "$target"; then
           local pmid
           pmid=$(parse_pmid "$target") || return 1
           canonical="pmid:${pmid}"
