@@ -5,6 +5,23 @@ All notable changes to paper7 are documented here.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com).
 Pre-1.0, minor versions may add features; breaking changes (if any) are called out explicitly.
 
+## [0.2.1] — 2026-04-18
+
+Interactive browser over the local KB. Small, focused release — no behavior change to fetch/search paths.
+
+### Added
+
+- **`paper7 browse`** — opens an fzf picker over the cached knowledge base (arXiv + PubMed combined). Preview pane shows the paper header and first 40 lines; Enter renders the full Markdown via `glow -p` (falls back to `less -R`, then `cat`). Esc exits cleanly.
+- New helpers in `paper7.sh`: `list_browse_entries` (tab-separated cache enumeration) and `render_paper` (glow/less/cat fallback chain) — reusable by future commands.
+- `PAPER7_NO_MAIN` env guard at the bottom of `paper7.sh` so test harnesses can `source` the script without triggering the CLI dispatcher.
+- `tests/test_browse.sh` — 4 smoke assertions; full suite now 24/24.
+
+### Notes
+
+- `fzf` becomes a **hard dep for `paper7 browse` only**. All other commands stay pure curl/sed/awk/grep. A user who never runs `browse` never needs fzf.
+- `glow` is recommended but optional — graceful fallback.
+- README hero and "How it works" section already reflected multi-source in 0.2.0; README Usage + CLI reference add the `browse` line in this release.
+
 ## [0.2.0] — 2026-04-18
 
 Multi-source and knowledge-graph release. Still pure bash, still zero deps beyond `curl/sed/grep/awk`.
@@ -46,5 +63,6 @@ Initial release.
 - Claude Code slash command + skills.sh package (paper7, paper7-research)
 - Benchmark: 97% smaller than PDF, 86% smaller than raw HTML across 5 landmark papers
 
+[0.2.1]: https://github.com/lucianfialho/paper7/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/lucianfialho/paper7/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/lucianfialho/paper7/releases/tag/v0.1.0
