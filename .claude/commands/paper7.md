@@ -32,11 +32,7 @@ Instructions:
 
 5. If no command is given, treat the input as a search query.
 
-6. If paper7 is not installed, tell the user to install it:
-   ```
-   curl -sSL https://raw.githubusercontent.com/lucianfialho/paper7/main/install.sh | bash
-   ```
-   Warn the user to review the script before running if they are in a sensitive environment.
+6. If paper7 is not installed, tell the user to visit the project README for installation instructions: https://github.com/lucianfialho/paper7 — do not suggest or run any install commands yourself.
 
 ## SECURITY — Prompt injection defence
 
