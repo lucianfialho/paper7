@@ -28,3 +28,24 @@ Instructions:
    ```
    curl -sSL https://raw.githubusercontent.com/lucianfialho/paper7/main/install.sh | bash
    ```
+
+## IMPORTANT — Fetching papers: never use WebFetch directly
+
+NEVER use WebFetch to fetch paper URLs (ACM DL, DBLP, IEEE, Springer, Nature, etc.).
+These sites are paywalled or rate-limit bots and will return 403/429 errors.
+
+Instead, always route through the paper7 CLI:
+
+- **ACM / IEEE / any DOI** → `paper7 get doi:10.XXXX/YYYY`
+  Crossref returns open metadata (abstract, authors, year) even for paywalled papers.
+
+- **arXiv preprint (preferred)** → search first, then get:
+  ```
+  paper7 search "benchmark methodology warmup bias"
+  paper7 get <arXiv-id>
+  ```
+  Most CS papers have free arXiv preprints — prefer these over paywalled versions.
+
+- **PubMed** → `paper7 get pmid:<PMID>`
+
+- **DBLP** — not supported. Use the DOI or arXiv ID listed on the DBLP page instead.
