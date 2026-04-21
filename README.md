@@ -34,7 +34,8 @@ curl -sL https://raw.githubusercontent.com/lucianfialho/paper7/main/claude-code/
 
 After installing, try prompts like:
 - `paper7 search "attention mechanism"` — search arXiv
-- `paper7 get 2401.04088` — fetch a paper as clean Markdown
+- `paper7 get 2401.04088` — fetch a compact paper header with summary + section index
+- `paper7 get 2401.04088 --detailed --range 35:67` — fetch just one detailed slice
 - "Research whether LoRA or full fine-tuning is better for my use case" — triggers the research skill
 
 ## Usage
@@ -46,8 +47,10 @@ paper7 search "mixture of experts" --max 5
 # Search PubMed (biomedical, clinical, pharmacological)
 paper7 search "psilocybin hypertension" --source pubmed --max 5
 
-# Fetch a paper as clean Markdown
+# Fetch a paper (compact indexed header by default)
 paper7 get 2401.04088                          # arXiv
+paper7 get 2401.04088 --detailed               # full paper
+paper7 get 2401.04088 --detailed --range 35:67 # just lines 35-67 from full paper
 paper7 get https://arxiv.org/abs/2401.04088
 paper7 get pmid:38903003                       # PubMed (abstract only)
 paper7 get doi:10.1101/2023.12.15.571821       # any DOI via Crossref (bioRxiv, medRxiv, etc.)
@@ -75,10 +78,11 @@ paper7 vault all                                # export every cached paper
 paper7 browse                                   # fzf picker + preview; Enter renders, Esc quits
 
 # Pipe to anything
-paper7 get 2401.04088 | claude "explain this"   # Claude Code
-paper7 get 2401.04088 | llm "summarize"         # simon willison's llm
-paper7 get 2401.04088 | pbcopy                  # clipboard (macOS)
-paper7 get 2401.04088 --no-refs > paper.md      # save to file
+paper7 get 2401.04088 | claude "which section should I read?"      # compact header first
+paper7 get 2401.04088 --detailed --range 35:67 | claude "explain"  # just one section slice
+paper7 get 2401.04088 --detailed | llm "summarize"                 # simon willison's llm
+paper7 get 2401.04088 --detailed | pbcopy                          # clipboard (macOS)
+paper7 get 2401.04088 --detailed --no-refs > paper.md              # save full paper to file
 
 # End-to-end: search PubMed, then fetch and summarize
 paper7 search "psilocybin hypertension" --source pubmed --max 3
@@ -96,7 +100,7 @@ PubMed results use a `pmid:` prefix on the ID; arXiv IDs keep the native `YYMM.N
 
 `paper7 get doi:<DOI>` covers anything with a DOI — bioRxiv, medRxiv, PsyArXiv, ChemRxiv, journal articles — via Crossref (metadata + abstract). bioRxiv/medRxiv full text isn't available (their pages block direct HTTP); the rendered Markdown includes a `**Full text:**` link.
 
-Semantic Scholar is also wired in as a metadata layer (not a full-paper fetcher): `paper7 refs <id>` lists canonical references, and `paper7 get` enriches its Markdown header with an auto-generated `**TLDR:**` line when one exists.
+Semantic Scholar is also wired in as a metadata layer (not a full-paper fetcher): `paper7 refs <id>` lists canonical references, and `paper7 get --detailed` enriches its Markdown header with an auto-generated `**TLDR:**` line when one exists. Plain `paper7 get` emits a compact header with a summary and line-indexed sections so agents can fetch only the ranges they need.
 
 For per-source endpoints, rate limits, auth, and known gaps see [docs/sources.md](docs/sources.md).
 
@@ -169,7 +173,7 @@ paper7 <command> [options]
 
 Commands:
   search <query>       Search papers by keyword (arXiv or PubMed)
-  get <id>             Fetch paper and convert to Markdown (TLDR via Semantic Scholar)
+  get <id>             Fetch paper; compact header by default, full text with --detailed
                        id shapes: arXiv (YYMM.NNNNN), pmid:NNN, doi:10.XXXX/...
   refs <id>            List references via Semantic Scholar (requires jq)
                        id shapes: YYMM.NNNNN (arXiv),
@@ -189,6 +193,8 @@ Options:
   --no-refs            Strip references section (arXiv only; no-op for PubMed)
   --no-cache           Force re-download
   --no-tldr            Skip Semantic Scholar TLDR enrichment in `get`
+  --detailed           Emit the full paper instead of the compact indexed header
+  --range START:END    Detailed-only line slice from the full paper
   --json               Emit raw JSON (refs only)
   --help, -h           Show help
   --version, -v        Show version

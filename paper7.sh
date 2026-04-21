@@ -42,7 +42,7 @@ ${BOLD}Usage:${RESET}
 
 ${BOLD}Commands:${RESET}
   search <query>       Search papers by keyword (arXiv default; --source pubmed)
-  get <id>             Fetch paper and convert to markdown (TLDR via Semantic Scholar)
+  get <id>             Fetch paper; compact header by default, full text with --detailed
                        id shapes: arXiv (YYMM.NNNNN), pmid:NNN, doi:10.XXXX/...
   refs <id>            List references of a paper via Semantic Scholar (requires jq)
   repo <id>            Find GitHub repositories for a paper
@@ -62,6 +62,8 @@ ${BOLD}Examples:${RESET}
   paper7 search "mixture of experts"
   paper7 search "psilocybin hypertension" --source pubmed --max 5
   paper7 get 2401.04088
+  paper7 get 2401.04088 --detailed
+  paper7 get 2401.04088 --detailed --range 35:67
   paper7 get 2401.04088 --no-refs
   paper7 get https://arxiv.org/abs/2401.04088
   paper7 repo 2401.04088
@@ -159,6 +161,235 @@ load_config() {
   PAPER7_VAULT=$(grep '^PAPER7_VAULT=' "$config_file" 2>/dev/null | head -1 | cut -d= -f2- || true)
 }
 
+parse_range_spec() {
+  local input="$1"
+  if [[ "$input" =~ ^([0-9]+):([0-9]+)$ ]]; then
+    local start="${BASH_REMATCH[1]}"
+    local end="${BASH_REMATCH[2]}"
+    if [ "$start" -ge 1 ] && [ "$start" -le "$end" ]; then
+      echo "${start}:${end}"
+      return 0
+    fi
+  fi
+
+  err "invalid range: $input (expected format: START:END, START >= 1)"
+  return 1
+}
+
+normalize_summary() {
+  local text="$1"
+  text=$(printf '%s' "$text" | tr '\n' ' ' | tr -s ' ' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+  if [ -z "$text" ]; then
+    return 0
+  fi
+
+  if [ "${#text}" -gt 600 ]; then
+    printf '%s...\n' "${text:0:597}"
+  else
+    printf '%s\n' "$text"
+  fi
+}
+
+extract_lead_paragraph() {
+  awk '
+    BEGIN { after_rule = 0; seen = 0; text = "" }
+    /^---$/ { after_rule = 1; next }
+    !after_rule { next }
+    /^###[[:space:]]+/ {
+      if (seen) exit
+      next
+    }
+    /^##[[:space:]]+/ {
+      if (seen) exit
+      next
+    }
+    /^#[[:space:]]+/ {
+      if (seen) exit
+      next
+    }
+    /^[[:space:]]*$/ {
+      if (seen) exit
+      next
+    }
+    {
+      if (text != "") text = text " "
+      text = text $0
+      seen = 1
+    }
+    END { print text }
+  ' "$1"
+}
+
+load_summary() {
+  local dir="$1"
+  local cache_file="$2"
+  local summary_file="${dir}/summary.txt"
+
+  if [ -s "$summary_file" ]; then
+    cat "$summary_file"
+    return 0
+  fi
+
+  normalize_summary "$(extract_lead_paragraph "$cache_file")"
+}
+
+build_output_view() {
+  local cache_file="$1"
+  local no_refs="$2"
+  local view_file="$3"
+
+  if [ "$no_refs" = true ]; then
+    sed '/^## References/,$d' "$cache_file" > "$view_file"
+  else
+    cp "$cache_file" "$view_file"
+  fi
+}
+
+generate_index_rows() {
+  awk '
+    function flush(end_line) {
+      if (count == 0) return
+      gsub(/\|/, "\\|", titles[count])
+      printf "| %s | %d-%d |\n", titles[count], starts[count], end_line
+    }
+    /^###[[:space:]]+/ {
+      flush(NR - 1)
+      count++
+      titles[count] = substr($0, 5)
+      starts[count] = NR
+      next
+    }
+    /^##[[:space:]]+/ {
+      flush(NR - 1)
+      count++
+      titles[count] = substr($0, 4)
+      starts[count] = NR
+      next
+    }
+    /^#[[:space:]]+/ {
+      if (NR == 1) next
+      flush(NR - 1)
+      count++
+      titles[count] = substr($0, 3)
+      starts[count] = NR
+      next
+    }
+    END {
+      if (NR > 0) flush(NR)
+    }
+  ' "$1"
+}
+
+render_detailed_range() {
+  local view_file="$1"
+  local title="$2"
+  local range_spec="$3"
+  local start="${range_spec%%:*}"
+  local end="${range_spec##*:}"
+  local total_lines
+  total_lines=$(wc -l < "$view_file" | awk '{print $1}')
+
+  if [ "$start" -gt "$total_lines" ]; then
+    err "range start ${start} exceeds total lines ${total_lines}"
+    return 1
+  fi
+
+  if [ "$end" -gt "$total_lines" ]; then
+    end="$total_lines"
+  fi
+
+  echo "# ${title} (lines ${start}-${end})"
+  echo ""
+  echo "**Range:** ${start}-${end} of ${total_lines}"
+  echo ""
+  sed -n "${start},${end}p" "$view_file"
+}
+
+render_compact_output() {
+  local view_file="$1"
+  local dir="$2"
+  local canonical_id="$3"
+  local total_lines
+  total_lines=$(wc -l < "$view_file" | awk '{print $1}')
+
+  if [ "$total_lines" -lt 30 ]; then
+    cat "$view_file"
+    return 0
+  fi
+
+  local index_rows
+  index_rows=$(generate_index_rows "$view_file")
+  if [ -z "$index_rows" ]; then
+    info "no section headers found; emitting full paper"
+    cat "$view_file"
+    return 0
+  fi
+
+  local summary
+  summary=$(load_summary "$dir" "$view_file")
+
+  local title
+  title=$(sed -n '1{s/^# //;p;}' "$view_file")
+  [ -z "$title" ] && title="Untitled"
+
+  echo "# ${title}"
+  echo ""
+  awk '
+    NR == 1 { next }
+    $0 == "---" { exit }
+    /^[[:space:]]*$/ { next }
+    /^\*\*TLDR:\*\*/ { next }
+    { print }
+  ' "$view_file"
+
+  if [ -n "$summary" ]; then
+    echo ""
+    echo "**Summary:** ${summary}"
+  fi
+
+  echo ""
+  echo "**Index:**"
+  echo "| Section | Lines |"
+  echo "|---------|-------|"
+  printf '%s\n' "$index_rows"
+  echo ""
+  echo "> Fetch lines: \`paper7 get ${canonical_id} --detailed --range START:END\`"
+  echo "> Full paper: \`paper7 get ${canonical_id} --detailed\`"
+}
+
+emit_paper_output() {
+  local cache_file="$1"
+  local dir="$2"
+  local canonical_id="$3"
+  local no_refs="$4"
+  local detailed="$5"
+  local range_spec="$6"
+
+  local view_file
+  view_file=$(mktemp)
+  build_output_view "$cache_file" "$no_refs" "$view_file"
+
+  if [ "$detailed" = true ]; then
+    if [ -n "$range_spec" ]; then
+      local title
+      title=$(sed -n '1{s/^# //;p;}' "$view_file")
+      render_detailed_range "$view_file" "$title" "$range_spec"
+      local rc=$?
+      rm -f "$view_file"
+      return $rc
+    fi
+
+    cat "$view_file"
+    rm -f "$view_file"
+    return 0
+  fi
+
+  render_compact_output "$view_file" "$dir" "$canonical_id"
+  local rc=$?
+  rm -f "$view_file"
+  return $rc
+}
+
 # --- Semantic Scholar helpers ---
 
 # Hard-fail when jq is missing for commands that require structured JSON parsing.
@@ -229,6 +460,8 @@ cmd_get() {
   local no_cache=false
   local no_refs=false
   local no_tldr=false
+  local detailed=false
+  local range_spec=""
   local input=""
 
   while [[ $# -gt 0 ]]; do
@@ -236,9 +469,18 @@ cmd_get() {
       --no-cache) no_cache=true; shift ;;
       --no-refs)  no_refs=true; shift ;;
       --no-tldr)  no_tldr=true; shift ;;
+      --detailed) detailed=true; shift ;;
+      --range)
+        if [ $# -lt 2 ]; then
+          err "missing value for --range"
+          return 1
+        fi
+        range_spec=$(parse_range_spec "$2") || return 1
+        shift 2
+        ;;
       --help|-h)
         cat <<EOF
-Usage: paper7 get <id> [--no-refs] [--no-cache] [--no-tldr]
+Usage: paper7 get <id> [--no-refs] [--no-cache] [--no-tldr] [--detailed] [--range START:END]
 
 IDs:
   arXiv   — e.g. 2401.04088 or https://arxiv.org/abs/2401.04088
@@ -248,6 +490,8 @@ Options:
   --no-refs     Strip References section (arXiv only; no-op for PubMed)
   --no-cache    Force re-download, bypassing local cache
   --no-tldr     Skip the Semantic Scholar TLDR enrichment lookup
+  --detailed    Print the full paper instead of the compact indexed header
+  --range       Detailed-only line slice, format: START:END
 EOF
         return 0
         ;;
@@ -261,6 +505,11 @@ EOF
     return 1
   fi
 
+  if [ -n "$range_spec" ] && [ "$detailed" = false ]; then
+    err "--range requires --detailed"
+    return 1
+  fi
+
   # Dispatch by input shape — check DOI first (more specific prefix),
   # then PMID, then fall through to arXiv.
   if is_doi_input "$input"; then
@@ -269,7 +518,7 @@ EOF
     if [ "$no_refs" = true ]; then
       info "note: --no-refs has no effect for DOI fetches"
     fi
-    cmd_get_doi "$doi" "$no_cache" "$no_tldr"
+    cmd_get_doi "$doi" "$no_cache" "$no_tldr" "$detailed" "$range_spec"
     return $?
   fi
 
@@ -279,13 +528,13 @@ EOF
     if [ "$no_refs" = true ]; then
       info "note: --no-refs has no effect for PubMed abstracts"
     fi
-    cmd_get_pubmed "$pmid" "$no_cache" "$no_tldr"
+    cmd_get_pubmed "$pmid" "$no_cache" "$no_tldr" "$detailed" "$range_spec"
     return $?
   fi
 
   local id
   id=$(parse_arxiv_id "$input") || return 1
-  cmd_get_arxiv "$id" "$no_cache" "$no_refs" "$no_tldr"
+  cmd_get_arxiv "$id" "$no_cache" "$no_refs" "$no_tldr" "$detailed" "$range_spec"
 }
 
 cmd_get_arxiv() {
@@ -293,29 +542,28 @@ cmd_get_arxiv() {
   local no_cache="$2"
   local no_refs="$3"
   local no_tldr="${4:-false}"
+  local detailed="${5:-false}"
+  local range_spec="${6:-}"
 
-  local cache_file="${CACHE_DIR}/${id}/paper.md"
-  local meta_file="${CACHE_DIR}/${id}/meta.json"
+  local dir="${CACHE_DIR}/${id}"
+  local cache_file="${dir}/paper.md"
+  local meta_file="${dir}/meta.json"
 
   # Check cache
   if [ "$no_cache" = false ] && [ -f "$cache_file" ]; then
     info "cached: $cache_file"
-    if [ "$no_refs" = true ]; then
-      sed '/^## References/,$d' "$cache_file"
-    else
-      cat "$cache_file"
-    fi
+    emit_paper_output "$cache_file" "$dir" "$id" "$no_refs" "$detailed" "$range_spec"
     return 0
   fi
 
   ensure_cache_dir
-  mkdir -p "${CACHE_DIR}/${id}"
+  mkdir -p "$dir"
 
-  local html_file="${CACHE_DIR}/${id}/raw.html"
+  local html_file="${dir}/raw.html"
 
   # Fetch metadata from arXiv API (clean title + authors)
   info "fetching metadata for $id ..."
-  local api_file="${CACHE_DIR}/${id}/api.xml"
+  local api_file="${dir}/api.xml"
   curl -sL -o "$api_file" "https://export.arxiv.org/api/query?id_list=${id}&max_results=1"
 
   local title
@@ -325,6 +573,9 @@ cmd_get_arxiv() {
   local authors
   authors=$(sed -n 's/.*<name>\(.*\)<\/name>.*/\1/p' "$api_file" 2>/dev/null | tr '\n' ',' | sed 's/,$//' | sed 's/,/, /g' || true)
   [ -z "$authors" ] && authors="Unknown Authors"
+
+  local abstract
+  abstract=$(tr '\n' ' ' < "$api_file" | sed -n 's:.*<summary>\(.*\)</summary>.*:\1:p' | tail -1 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' || true)
 
   rm -f "$api_file"
 
@@ -350,6 +601,12 @@ cmd_get_arxiv() {
   if [ "$no_tldr" = false ]; then
     info "fetching TLDR from Semantic Scholar ..."
     tldr=$(fetch_tldr "$id" || true)
+  fi
+
+  local summary
+  summary=$(normalize_summary "$abstract")
+  if [ -z "$summary" ]; then
+    summary=$(normalize_summary "$tldr")
   fi
 
   # Build markdown: header + converted content
@@ -424,20 +681,20 @@ META
   # Clean up raw HTML
   rm -f "$html_file"
 
-  info "cached: $cache_file"
-
-  # Output
-  if [ "$no_refs" = true ]; then
-    sed '/^## References/,$d' "$cache_file"
-  else
-    cat "$cache_file"
+  if [ -n "$summary" ]; then
+    printf '%s\n' "$summary" > "${dir}/summary.txt"
   fi
+
+  info "cached: $cache_file"
+  emit_paper_output "$cache_file" "$dir" "$id" "$no_refs" "$detailed" "$range_spec"
 }
 
 cmd_get_pubmed() {
   local pmid="$1"
   local no_cache="$2"
   local no_tldr="${3:-false}"
+  local detailed="${4:-false}"
+  local range_spec="${5:-}"
 
   local dir="${CACHE_DIR}/pmid-${pmid}"
   local cache_file="${dir}/paper.md"
@@ -446,7 +703,7 @@ cmd_get_pubmed() {
   # Check cache
   if [ "$no_cache" = false ] && [ -f "$cache_file" ]; then
     info "cached: $cache_file"
-    cat "$cache_file"
+    emit_paper_output "$cache_file" "$dir" "pmid:${pmid}" false "$detailed" "$range_spec"
     return 0
   fi
 
@@ -586,6 +843,12 @@ cmd_get_pubmed() {
     tldr=$(fetch_tldr "pmid:${pmid}" || true)
   fi
 
+  local summary
+  summary=$(normalize_summary "$abstract")
+  if [ -z "$summary" ]; then
+    summary=$(normalize_summary "$tldr")
+  fi
+
   {
     echo "# ${title}"
     echo ""
@@ -620,23 +883,29 @@ META
 META
   fi
 
+  if [ -n "$summary" ]; then
+    printf '%s\n' "$summary" > "${dir}/summary.txt"
+  fi
+
   rm -f "$xml_file"
 
   info "cached: $cache_file"
-  cat "$cache_file"
+  emit_paper_output "$cache_file" "$dir" "pmid:${pmid}" false "$detailed" "$range_spec"
 }
 
 cmd_get_doi() {
   local doi="$1"
   local no_cache="$2"
   local no_tldr="${3:-false}"
+  local detailed="${4:-false}"
+  local range_spec="${5:-}"
 
   # Auto-redirect arXiv DOIs (10.48550/arXiv.YYMM.NNNNN) → cmd_get_arxiv,
   # so they share the existing arXiv cache and don't duplicate.
   if [[ "$doi" =~ ^10\.48550/arXiv\.([0-9]{4}\.[0-9]{4,5})$ ]]; then
     local arxiv_id="${BASH_REMATCH[1]}"
     info "DOI is arXiv mirror; redirecting to arXiv path for $arxiv_id"
-    cmd_get_arxiv "$arxiv_id" "$no_cache" "false" "$no_tldr"
+    cmd_get_arxiv "$arxiv_id" "$no_cache" "false" "$no_tldr" "$detailed" "$range_spec"
     return $?
   fi
 
@@ -651,7 +920,7 @@ cmd_get_doi() {
   # Cache hit
   if [ "$no_cache" = false ] && [ -f "$cache_file" ]; then
     info "cached: $cache_file"
-    cat "$cache_file"
+    emit_paper_output "$cache_file" "$dir" "doi:${doi}" false "$detailed" "$range_spec"
     return 0
   fi
 
@@ -747,6 +1016,12 @@ cmd_get_doi() {
     tldr=$(fetch_tldr "doi:${doi}" || true)
   fi
 
+  local summary
+  summary=$(normalize_summary "$abstract")
+  if [ -z "$summary" ]; then
+    summary=$(normalize_summary "$tldr")
+  fi
+
   # Write paper.md
   {
     echo "# ${title}"
@@ -776,8 +1051,12 @@ META
 META
   fi
 
+  if [ -n "$summary" ]; then
+    printf '%s\n' "$summary" > "${dir}/summary.txt"
+  fi
+
   info "cached: $cache_file"
-  cat "$cache_file"
+  emit_paper_output "$cache_file" "$dir" "doi:${doi}" false "$detailed" "$range_spec"
 }
 
 cmd_refs() {
