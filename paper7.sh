@@ -247,61 +247,53 @@ build_output_view() {
 }
 
 generate_index_rows() {
+  # Stack-based parser: a heading at level N closes any open heading at depth >= N,
+  # so each section's range covers all of its descendants regardless of nesting depth.
   awk '
-    function emit_row(title, s, e,    t) {
-      t = title; gsub(/\|/, "\\|", t)
-      printf "| %s | %d-%d |\n", t, s, e
+    BEGIN { top = 0; n = 0 }
+
+    function push(level, title, line) {
+      n++
+      p_lvl[n]   = level
+      p_title[n] = title
+      p_start[n] = line
+      p_end[n]   = -1
+      top++
+      stk_idx[top] = n
+      stk_lvl[top] = level
     }
-    function emit_sub_row(title, s, e,    t) {
-      t = title; gsub(/\|/, "\\|", t)
-      printf "|     %s | %d-%d |\n", t, s, e
+
+    function pop_to(target_level, end_line,    idx) {
+      while (top > 0 && stk_lvl[top] >= target_level) {
+        idx = stk_idx[top]
+        p_end[idx] = end_line
+        top--
+      }
     }
-    function flush_section(end_line,    i, sub_e) {
-      if (!sec_active) return
-      if (n_subs > 0) {
-        emit_row(sec_title, sec_start, end_line)
-        for (i = 1; i <= n_subs; i++) {
-          sub_e = (i < n_subs) ? sub_start[i+1] - 1 : end_line
-          emit_sub_row(sub_title[i], sub_start[i], sub_e)
+
+    /^#{1,4}[[:space:]]+/ {
+      lvl = 0
+      while (substr($0, lvl + 1, 1) == "#") lvl++
+      if (lvl == 1) next
+      title = substr($0, lvl + 2)
+      pop_to(lvl, NR - 1)
+      push(lvl, title, NR)
+      next
+    }
+
+    END {
+      pop_to(1, NR)
+      for (i = 1; i <= n; i++) {
+        t = p_title[i]; gsub(/\|/, "\\|", t)
+        if (p_lvl[i] == 2) {
+          prefix = "| "
+        } else {
+          prefix = "|"
+          for (j = 2; j < p_lvl[i]; j++) prefix = prefix "     "
         }
-      } else {
-        emit_row(sec_title, sec_start, end_line)
+        printf "%s%s | %d-%d |\n", prefix, t, p_start[i], p_end[i]
       }
-      sec_active = 0; n_subs = 0
-      delete sub_title; delete sub_start
     }
-    /^####[[:space:]]+/ {
-      if (sec_active) {
-        n_subs++; sub_title[n_subs] = substr($0, 6); sub_start[n_subs] = NR
-      } else {
-        flush_section(NR - 1)
-        sec_title = substr($0, 6); sec_start = NR; sec_active = 1
-      }
-      next
-    }
-    /^###[[:space:]]+/ {
-      if (sec_active) {
-        n_subs++; sub_title[n_subs] = substr($0, 5); sub_start[n_subs] = NR
-      } else {
-        flush_section(NR - 1)
-        sec_title = substr($0, 5); sec_start = NR; sec_active = 1
-      }
-      next
-    }
-    /^##[[:space:]]+/ {
-      flush_section(NR - 1)
-      sec_title = substr($0, 4); sec_start = NR; sec_active = 1; n_subs = 0
-      delete sub_title; delete sub_start
-      next
-    }
-    /^#[[:space:]]+/ {
-      if (NR == 1) next
-      flush_section(NR - 1)
-      sec_title = substr($0, 3); sec_start = NR; sec_active = 1; n_subs = 0
-      delete sub_title; delete sub_start
-      next
-    }
-    END { if (NR > 0) flush_section(NR) }
   ' "$1"
 }
 
