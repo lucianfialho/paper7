@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="0.4.0"
+VERSION="0.5.0"
 CACHE_DIR="${HOME}/.paper7/cache"
 AR5IV_URL="https://ar5iv.labs.arxiv.org/html"
 ARXIV_API="http://export.arxiv.org/api/query"

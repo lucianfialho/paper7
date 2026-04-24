@@ -5,6 +5,33 @@ All notable changes to paper7 are documented here.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com).
 Pre-1.0, minor versions may add features; breaking changes (if any) are called out explicitly.
 
+## [0.5.0] — 2026-04-24
+
+LLM Wiki knowledge base + prompt injection boundary markers.
+
+### Added
+
+- **`paper7 kb`** — LLM Wiki pattern (Karpathy): paper7 fetches and stores; the agent synthesizes and maintains wiki pages. Zero dependencies, agent-agnostic (Claude Code, Codex, OpenCode).
+  - `kb ingest <id>` — fetches paper to `~/.paper7/wiki/sources/` and prints content for the agent to read
+  - `kb write <slug>` — agent pipes synthesized wiki page to stdin; stored in `~/.paper7/wiki/pages/`
+  - `kb read <slug|index|log>` — prints a wiki page, the index catalog, or the history log
+  - `kb search <pattern>` — grep over agent-written wiki pages
+  - `kb list` — lists pages and sources with titles
+  - `kb status` — shows file counts and wiki paths
+- **Prompt injection boundary markers** — all `paper7 get` output is now wrapped in `<paper id="…">` … `</paper>` tags so agents can distinguish fetched paper content from system instructions.
+- `examples/research-kb/` rewritten in LLM Wiki format: `sources/`, `pages/`, `index.md`, `log.md` with three real synthesized wiki pages on PDF parsing research.
+
+### Removed
+
+- `claude-code/` directory (superseded by `skills/`)
+- `examples/clinical-research-kb/` (redundant with research-kb)
+- Old flat `kb_*.md` files in `examples/research-kb/` (replaced by wiki layout)
+
+### Changed
+
+- `skills/paper7/SKILL.md` — added Security section documenting the `<paper>` boundary and the LLM Wiki workflow
+- README updated with `kb` commands, boundary marker docs, and LLM Wiki pattern reference
+
 ## [0.4.0] — 2026-04-18
 
 DOI as a first-class identifier. paper7 now fetches any preprint or article with a DOI — bioRxiv, medRxiv, PsyArXiv, ChemRxiv, journal articles. Crossref joins the source roster.
