@@ -1850,29 +1850,84 @@ EOF
   render_paper "$id"
 }
 
-# --- KB (qmd integration) ---
+# --- KB (sqlite3 + FTS5 + optional sqlite-vec) ---
 
-KB_COLLECTION="paper7"
-KB_DIR="${HOME}/.paper7/kb"
+KB_DB="${HOME}/.paper7/kb.sqlite"
+KB_VEC_EXT=""
+# Detect sqlite-vec extension installed by install.sh
+for _ext in "${HOME}/.paper7/sqlite-vec.dylib" "${HOME}/.paper7/sqlite-vec.so"; do
+  [ -f "$_ext" ] && KB_VEC_EXT="$_ext" && break
+done
+unset _ext
 
-_kb_require_qmd() {
-  if ! command -v qmd >/dev/null 2>&1; then
-    err "qmd not installed — required for KB commands"
-    echo "  npm install -g @tobilu/qmd" >&2
-    echo "  # or: bun install -g @tobilu/qmd" >&2
+_kb_require_sqlite3() {
+  if ! command -v sqlite3 >/dev/null 2>&1; then
+    err "sqlite3 not found — install with: brew install sqlite (macOS) or apt install sqlite3"
     return 1
   fi
 }
 
-_kb_ensure_collection() {
-  mkdir -p "$KB_DIR"
-  local status_out
-  status_out=$(qmd status 2>/dev/null || true)
-  if ! printf '%s' "$status_out" | grep -q "$KB_COLLECTION"; then
-    info "creating qmd collection '$KB_COLLECTION' → $KB_DIR"
-    qmd collection add "$KB_DIR" --name "$KB_COLLECTION" >/dev/null
-    qmd context add "qmd://$KB_COLLECTION" "Academic papers fetched via paper7" >/dev/null
+_kb_sql() {
+  if [ -n "$KB_VEC_EXT" ]; then
+    sqlite3 "$KB_DB" ".load ${KB_VEC_EXT}" "$@"
+  else
+    sqlite3 "$KB_DB" "$@"
   fi
+}
+
+_kb_init_db() {
+  _kb_sql "
+    CREATE TABLE IF NOT EXISTS papers (
+      id        TEXT PRIMARY KEY,
+      title     TEXT NOT NULL,
+      authors   TEXT,
+      abstract  TEXT,
+      body      TEXT NOT NULL,
+      source    TEXT,
+      added_at  TEXT DEFAULT (datetime('now'))
+    );
+    CREATE VIRTUAL TABLE IF NOT EXISTS papers_fts
+      USING fts5(id UNINDEXED, title, authors, abstract, body, content=papers, content_rowid=rowid);
+    CREATE TRIGGER IF NOT EXISTS papers_ai AFTER INSERT ON papers BEGIN
+      INSERT INTO papers_fts(rowid, id, title, authors, abstract, body)
+        VALUES (new.rowid, new.id, new.title, new.authors, new.abstract, new.body);
+    END;
+    CREATE TRIGGER IF NOT EXISTS papers_ad AFTER DELETE ON papers BEGIN
+      INSERT INTO papers_fts(papers_fts, rowid, id, title, authors, abstract, body)
+        VALUES ('delete', old.rowid, old.id, old.title, old.authors, old.abstract, old.body);
+    END;
+  "
+  # Add vectors table if sqlite-vec is available
+  if [ -n "$KB_VEC_EXT" ]; then
+    _kb_sql "
+      CREATE TABLE IF NOT EXISTS paper_chunks (
+        id        TEXT NOT NULL,
+        seq       INTEGER NOT NULL,
+        text      TEXT NOT NULL,
+        PRIMARY KEY (id, seq)
+      );
+      CREATE VIRTUAL TABLE IF NOT EXISTS chunks_vec
+        USING vec0(embedding float[768]);
+    " 2>/dev/null || true
+  fi
+}
+
+_kb_parse_paper() {
+  local file="$1"
+  local id="$2"
+  awk -v id="$id" '
+    BEGIN { title=""; authors="" }
+    NR==1 && /^# / { title=substr($0,3); next }
+    /^\*\*Authors:\*\*/ { line=$0; sub(/^\*\*Authors:\*\* */, "", line); authors=line }
+    { body=body $0 "\n" }
+    END {
+      gsub(/\047/, "\047\047", title)
+      gsub(/\047/, "\047\047", authors)
+      gsub(/\047/, "\047\047", body)
+      gsub(/\047/, "\047\047", id)
+      printf "INSERT INTO papers(id,title,authors,abstract,body,source) VALUES(\047%s\047,\047%s\047,\047%s\047,\047\047,\047%s\047,\047arxiv\047);\n", id, title, authors, body
+    }
+  ' "$file"
 }
 
 cmd_kb() {
@@ -1881,49 +1936,102 @@ cmd_kb() {
 
   case "$subcmd" in
     add)
-      _kb_require_qmd || return 1
+      _kb_require_sqlite3 || return 1
       if [[ $# -eq 0 ]]; then
         err "usage: paper7 kb add <id> [get-options]"
         return 1
       fi
       local paper_id="$1"; shift
-      _kb_ensure_collection
+      _kb_init_db
 
-      local out_file
-      out_file="$KB_DIR/${paper_id//\//_}.md"
-      info "fetching $paper_id → $out_file"
-      PAPER7_NO_MAIN=1 bash "$0" get "$paper_id" --detailed --no-refs "$@" > "$out_file"
-
-      info "indexing in qmd..."
-      qmd update --collection "$KB_COLLECTION" >/dev/null 2>&1 || qmd embed >/dev/null 2>&1
+      local tmp_file
+      tmp_file=$(mktemp /tmp/paper7-kb-XXXXXX.md)
+      info "fetching $paper_id..."
+      bash "$0" get "$paper_id" --detailed --no-refs "$@" > "$tmp_file"
 
       local title
-      title=$(head -1 "$out_file" | sed 's/^# //')
+      title=$(head -1 "$tmp_file" | sed 's/^# //')
+
+      info "indexing..."
+      local sql
+      sql=$(_kb_parse_paper "$tmp_file" "$paper_id")
+      # DELETE first so FTS delete trigger fires, then INSERT triggers FTS insert
+      _kb_sql "DELETE FROM papers WHERE id='$(printf '%s' "$paper_id" | sed "s/'/''/g")'; ${sql}"
+      rm -f "$tmp_file"
+
       echo -e "${GREEN}added${RESET} $title"
-      echo "  path: $out_file"
+      echo "  id: $paper_id"
       ;;
 
     search)
-      _kb_require_qmd || return 1
+      _kb_require_sqlite3 || return 1
       if [[ $# -eq 0 ]]; then
         err "usage: paper7 kb search <query> [--n N]"
         return 1
       fi
-      qmd search "$@" -c "$KB_COLLECTION"
+      local n=5 query=""
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --n) n="$2"; shift 2 ;;
+          *) query="${query} $1"; shift ;;
+        esac
+      done
+      query="${query# }"
+      _kb_init_db
+      # Build FTS5 query: wrap each token so hyphens don't confuse the parser
+      local safe_query fts_query
+      safe_query=$(printf '%s' "$query" | sed "s/'/''/g")
+      fts_query=$(printf '%s' "$safe_query" | tr ' ' '\n' | awk 'NF{printf "\"%s\" ", $0}')
+      _kb_sql "
+        SELECT p.id, p.title, coalesce(p.authors,''),
+               snippet(papers_fts, 4, char(171), char(187), '...', 20),
+               round(-bm25(papers_fts), 6)
+        FROM papers_fts
+        JOIN papers p ON papers_fts.id = p.id
+        WHERE papers_fts MATCH '${fts_query}'
+        ORDER BY bm25(papers_fts)
+        LIMIT ${n};
+      " -separator '|' | awk -F'|' '
+        NF>=4 {
+          printf "\033[1m%s\033[0m — %s\n", $2, $3
+          printf "  id: %s  score: %s\n", $1, $5
+          printf "  %s\n\n", $4
+        }
+      '
       ;;
 
-    query)
-      _kb_require_qmd || return 1
+    remove)
+      _kb_require_sqlite3 || return 1
       if [[ $# -eq 0 ]]; then
-        err "usage: paper7 kb query <question> [--n N]"
+        err "usage: paper7 kb remove <id>"
         return 1
       fi
-      qmd query "$@" -c "$KB_COLLECTION"
+      local paper_id="$1"
+      _kb_sql "DELETE FROM papers WHERE id='$(printf '%s' "$paper_id" | sed "s/'/''/g")';"
+      echo "removed $paper_id"
+      ;;
+
+    list)
+      _kb_require_sqlite3 || return 1
+      _kb_init_db
+      _kb_sql "SELECT id, title, authors, added_at FROM papers ORDER BY added_at DESC;" \
+        -separator $'\t' | awk -F'\t' '{
+          printf "\033[1m%s\033[0m — %s\n  authors: %s\n  added: %s\n\n", $2, $1, $3, $4
+        }'
       ;;
 
     status)
-      _kb_require_qmd || return 1
-      qmd status
+      _kb_require_sqlite3 || return 1
+      _kb_init_db
+      local count
+      count=$(_kb_sql "SELECT COUNT(*) FROM papers;")
+      echo "KB: ${count} papers indexed"
+      echo "DB: ${KB_DB}"
+      if [ -n "$KB_VEC_EXT" ]; then
+        echo "Vector search: enabled (sqlite-vec)"
+      else
+        echo "Vector search: disabled (sqlite-vec not found at ~/.paper7/)"
+      fi
       ;;
 
     ''|--help|-h)
@@ -1931,20 +2039,21 @@ cmd_kb() {
 Usage: paper7 kb <subcommand> [options]
 
 Subcommands:
-  add <id> [get-opts]   Fetch paper and index it in the local KB (requires qmd)
-  search <query>        Fast keyword search (BM25) across KB papers
-  query  <question>     Hybrid search + LLM reranking (best quality, slower)
-  status                Show KB index health and collection info
+  add <id> [get-opts]   Fetch paper and index it in the local KB
+  search <query>        Full-text search (BM25) across KB papers
+  list                  List all indexed papers
+  remove <id>           Remove a paper from the KB
+  status                Show KB stats and index info
 
-The KB stores papers in ~/.paper7/kb/ and indexes them via qmd (BM25 + vector
-search + local LLM reranking). Install qmd with:
-  npm install -g @tobilu/qmd
+Index stored at: ~/.paper7/kb.sqlite
+Vector search via sqlite-vec is enabled automatically when installed.
 
 Examples:
   paper7 kb add 1706.03762
   paper7 kb add 2005.11401 --no-refs
   paper7 kb search "attention mechanism"
-  paper7 kb query "how does RAG handle out-of-domain queries"
+  paper7 kb search "query expansion" --n 10
+  paper7 kb list
   paper7 kb status
 EOF
       ;;
