@@ -248,36 +248,60 @@ build_output_view() {
 
 generate_index_rows() {
   awk '
-    function flush(end_line) {
-      if (count == 0) return
-      gsub(/\|/, "\\|", titles[count])
-      printf "| %s | %d-%d |\n", titles[count], starts[count], end_line
+    function emit_row(title, s, e,    t) {
+      t = title; gsub(/\|/, "\\|", t)
+      printf "| %s | %d-%d |\n", t, s, e
+    }
+    function emit_sub_row(title, s, e,    t) {
+      t = title; gsub(/\|/, "\\|", t)
+      printf "|     %s | %d-%d |\n", t, s, e
+    }
+    function flush_section(end_line,    i, sub_e) {
+      if (!sec_active) return
+      if (n_subs > 0) {
+        emit_row(sec_title, sec_start, end_line)
+        for (i = 1; i <= n_subs; i++) {
+          sub_e = (i < n_subs) ? sub_start[i+1] - 1 : end_line
+          emit_sub_row(sub_title[i], sub_start[i], sub_e)
+        }
+      } else {
+        emit_row(sec_title, sec_start, end_line)
+      }
+      sec_active = 0; n_subs = 0
+      delete sub_title; delete sub_start
+    }
+    /^####[[:space:]]+/ {
+      if (sec_active) {
+        n_subs++; sub_title[n_subs] = substr($0, 6); sub_start[n_subs] = NR
+      } else {
+        flush_section(NR - 1)
+        sec_title = substr($0, 6); sec_start = NR; sec_active = 1
+      }
+      next
     }
     /^###[[:space:]]+/ {
-      flush(NR - 1)
-      count++
-      titles[count] = substr($0, 5)
-      starts[count] = NR
+      if (sec_active) {
+        n_subs++; sub_title[n_subs] = substr($0, 5); sub_start[n_subs] = NR
+      } else {
+        flush_section(NR - 1)
+        sec_title = substr($0, 5); sec_start = NR; sec_active = 1
+      }
       next
     }
     /^##[[:space:]]+/ {
-      flush(NR - 1)
-      count++
-      titles[count] = substr($0, 4)
-      starts[count] = NR
+      flush_section(NR - 1)
+      sec_title = substr($0, 4); sec_start = NR; sec_active = 1; n_subs = 0
+      delete sub_title; delete sub_start
       next
     }
     /^#[[:space:]]+/ {
       if (NR == 1) next
-      flush(NR - 1)
-      count++
-      titles[count] = substr($0, 3)
-      starts[count] = NR
+      flush_section(NR - 1)
+      sec_title = substr($0, 3); sec_start = NR; sec_active = 1; n_subs = 0
+      delete sub_title; delete sub_start
       next
     }
-    END {
-      if (NR > 0) flush(NR)
-    }
+    END { if (NR > 0) flush_section(NR) }
   ' "$1"
 }
 
