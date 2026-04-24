@@ -64,7 +64,7 @@ paper7 repo 2401.04088
 paper7 refs 1706.03762 --max 5
 paper7 refs 1706.03762 --json | jq '.data | length'   # pipe raw JSON
 
-# Manage your local knowledge base
+# Manage your local cache
 paper7 list                                     # show cached papers
 paper7 cache clear 2401.04088                   # remove one
 paper7 cache clear                              # clear all
@@ -87,6 +87,14 @@ paper7 get 2401.04088 --detailed --no-refs > paper.md              # save full p
 # End-to-end: search PubMed, then fetch and summarize
 paper7 search "psilocybin hypertension" --source pubmed --max 3
 paper7 get pmid:38903003 | claude "summarize the clinical case"
+
+# LLM Wiki — build a persistent knowledge base (agent-agnostic)
+paper7 kb ingest 1706.03762                     # fetch paper; agent reads and writes wiki pages
+paper7 kb write attention < attention.md        # agent writes a synthesized wiki page
+paper7 kb read index                            # show the catalog
+paper7 kb search "softmax"                      # grep over wiki pages
+paper7 kb list                                  # list pages and sources
+paper7 kb status                                # show counts and paths
 ```
 
 ## Sources
@@ -185,6 +193,7 @@ Commands:
   vault init <path>    Configure Obsidian-compatible vault
   vault <id>|all       Export arXiv paper(s) to vault with frontmatter + wikilinks
   browse               Interactive fzf picker over the local cache (glow renderer)
+  kb <sub>             LLM Wiki: ingest, write, read, search, list, status
 
 Options:
   --source SOURCE      search only — arxiv (default) or pubmed

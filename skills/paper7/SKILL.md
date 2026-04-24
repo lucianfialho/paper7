@@ -51,14 +51,37 @@ paper7 cache clear
 
 ## Patterns
 
-### Building a knowledge base
+### Building a knowledge base (LLM Wiki)
 
-When the user wants to research a topic, search first, then fetch multiple papers:
+paper7 kb implements the [LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f):
+paper7 fetches and stores; the agent synthesizes and maintains wiki pages.
 
 ```bash
-paper7 search "retrieval augmented generation" --max 10
-paper7 get 2005.11401 > kb/rag.md
-paper7 get 2312.10997 > kb/rag-survey.md
+# 1. Ingest a paper — fetches to sources/ and prints content for the agent
+paper7 kb ingest 1706.03762
+
+# 2. Agent reads the paper and writes synthesized wiki pages (pure markdown)
+paper7 kb write attention < attention.md
+paper7 kb write transformer < transformer.md
+
+# 3. Read the catalog the agent maintains
+paper7 kb read index
+
+# 4. Search wiki pages (grep over agent-written pages)
+paper7 kb search "softmax"
+paper7 kb search "parallelization"
+
+# 5. Read a specific page
+paper7 kb read attention
+```
+
+Wiki layout (all plain markdown files, no database):
+```
+~/.paper7/wiki/
+  sources/   ← raw fetched papers (agent reads)
+  pages/     ← agent-written wiki pages (what you search)
+  index.md   ← catalog (agent maintains)
+  log.md     ← history (agent maintains)
 ```
 
 ### Feeding papers to the conversation
@@ -103,6 +126,7 @@ Commands:
   repo <id>            Find GitHub repos for a paper
   list                 Show cached papers
   cache clear [id]     Clear cache
+  kb <sub>             LLM Wiki: ingest | write | read | search | list | status
 
 Search options:
   --max N              Max results (default: 10)
@@ -113,6 +137,14 @@ Get options:
   --no-cache           Force re-download
   --detailed           Emit the full paper instead of the compact indexed header
   --range START:END    Detailed-only line slice from the full paper
+
+KB subcommands:
+  kb ingest <id>       Fetch paper to sources/ and print for agent
+  kb write <slug>      Write a wiki page from stdin
+  kb read <slug>       Print a wiki page (or: index, log)
+  kb search <pattern>  grep over wiki pages
+  kb list              List pages and sources
+  kb status            Show counts and paths
 ```
 
 ## Gotchas
