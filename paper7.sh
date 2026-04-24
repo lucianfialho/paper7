@@ -52,6 +52,7 @@ ${BOLD}Commands:${RESET}
   vault <id>           Export paper to vault as Obsidian-ready Markdown
   vault all            Export all cached papers to vault
   browse               Interactive picker over the local cache (requires fzf)
+  kb <sub>            Knowledge base: add papers and search them (requires qmd)
   help                 Show this help
 
 ${BOLD}Options:${RESET}
@@ -1849,6 +1850,113 @@ EOF
   render_paper "$id"
 }
 
+# --- KB (qmd integration) ---
+
+KB_COLLECTION="paper7"
+KB_DIR="${HOME}/.paper7/kb"
+
+_kb_require_qmd() {
+  if ! command -v qmd >/dev/null 2>&1; then
+    err "qmd not installed — required for KB commands"
+    echo "  npm install -g @tobilu/qmd" >&2
+    echo "  # or: bun install -g @tobilu/qmd" >&2
+    return 1
+  fi
+}
+
+_kb_ensure_collection() {
+  mkdir -p "$KB_DIR"
+  local status_out
+  status_out=$(qmd status 2>/dev/null || true)
+  if ! printf '%s' "$status_out" | grep -q "$KB_COLLECTION"; then
+    info "creating qmd collection '$KB_COLLECTION' → $KB_DIR"
+    qmd collection add "$KB_DIR" --name "$KB_COLLECTION" >/dev/null
+    qmd context add "qmd://$KB_COLLECTION" "Academic papers fetched via paper7" >/dev/null
+  fi
+}
+
+cmd_kb() {
+  local subcmd="${1:-}"
+  shift 2>/dev/null || true
+
+  case "$subcmd" in
+    add)
+      _kb_require_qmd || return 1
+      if [[ $# -eq 0 ]]; then
+        err "usage: paper7 kb add <id> [get-options]"
+        return 1
+      fi
+      local paper_id="$1"; shift
+      _kb_ensure_collection
+
+      local out_file
+      out_file="$KB_DIR/${paper_id//\//_}.md"
+      info "fetching $paper_id → $out_file"
+      PAPER7_NO_MAIN=1 bash "$0" get "$paper_id" --detailed --no-refs "$@" > "$out_file"
+
+      info "indexing in qmd..."
+      qmd update --collection "$KB_COLLECTION" >/dev/null 2>&1 || qmd embed >/dev/null 2>&1
+
+      local title
+      title=$(head -1 "$out_file" | sed 's/^# //')
+      echo -e "${GREEN}added${RESET} $title"
+      echo "  path: $out_file"
+      ;;
+
+    search)
+      _kb_require_qmd || return 1
+      if [[ $# -eq 0 ]]; then
+        err "usage: paper7 kb search <query> [--n N]"
+        return 1
+      fi
+      qmd search "$@" -c "$KB_COLLECTION"
+      ;;
+
+    query)
+      _kb_require_qmd || return 1
+      if [[ $# -eq 0 ]]; then
+        err "usage: paper7 kb query <question> [--n N]"
+        return 1
+      fi
+      qmd query "$@" -c "$KB_COLLECTION"
+      ;;
+
+    status)
+      _kb_require_qmd || return 1
+      qmd status
+      ;;
+
+    ''|--help|-h)
+      cat <<EOF
+Usage: paper7 kb <subcommand> [options]
+
+Subcommands:
+  add <id> [get-opts]   Fetch paper and index it in the local KB (requires qmd)
+  search <query>        Fast keyword search (BM25) across KB papers
+  query  <question>     Hybrid search + LLM reranking (best quality, slower)
+  status                Show KB index health and collection info
+
+The KB stores papers in ~/.paper7/kb/ and indexes them via qmd (BM25 + vector
+search + local LLM reranking). Install qmd with:
+  npm install -g @tobilu/qmd
+
+Examples:
+  paper7 kb add 1706.03762
+  paper7 kb add 2005.11401 --no-refs
+  paper7 kb search "attention mechanism"
+  paper7 kb query "how does RAG handle out-of-domain queries"
+  paper7 kb status
+EOF
+      ;;
+
+    *)
+      err "unknown kb subcommand: $subcmd"
+      echo "  paper7 kb --help for usage" >&2
+      return 1
+      ;;
+  esac
+}
+
 # --- Main ---
 
 main() {
@@ -1869,6 +1977,7 @@ main() {
     vault)      cmd_vault "$@" ;;
     browse)     cmd_browse "$@" ;;
     refs)       cmd_refs "$@" ;;
+    kb)         cmd_kb "$@" ;;
     help|--help|-h)  usage ;;
     --version|-v)    echo "paper7 $VERSION" ;;
     *)
