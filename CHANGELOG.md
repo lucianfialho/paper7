@@ -5,6 +5,16 @@ All notable changes to paper7 are documented here.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com).
 Pre-1.0, minor versions may add features; breaking changes (if any) are called out explicitly.
 
+## [0.6.0] — 2026-04-25 (unreleased)
+
+Deep research as a skill: `paper7-ask` orchestrates search → triage → read → synthesize → cite, with file-back into the local KB.
+
+### Added
+
+- `paper7 cite <id> --format <bibtex|apa|abnt>` — formatted bibliographic citations from Crossref / arXiv / PubMed metadata.
+- `paper7 get <id> --abstract-only` — lightweight metadata + abstract output (~200 tokens) for cheap triage. Skips full-text fetch.
+- `skills/paper7-ask/SKILL.md` — new skill that drives the deep-research pipeline using paper7 primitives, with hard gate against fabricated citations and file-back into `paper7 kb`.
+
 ## [0.5.1] — 2026-04-25
 
 Fixes hierarchical section ranges in the compact header.
