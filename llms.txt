@@ -15,7 +15,8 @@ curl -sSL https://raw.githubusercontent.com/lucianfialho/paper7/main/install.sh 
 ## Commands
 
 - `paper7 search <query>` — Search papers by keyword. Options: `--source arxiv|pubmed` (default `arxiv`), `--max N` (default 10), `--sort relevance|date`
-- `paper7 get <id>` — Fetch paper, convert to clean Markdown, cache locally. Accepts arXiv IDs (`YYMM.NNNNN`), arXiv URLs, or PubMed IDs with `pmid:` prefix (e.g. `pmid:38903003`). Options: `--no-refs` (arXiv only), `--no-cache`
+- `paper7 get <id>` — Fetch paper, convert to clean Markdown, cache locally. Accepts arXiv IDs (`YYMM.NNNNN`), arXiv URLs, or PubMed IDs with `pmid:` prefix (e.g. `pmid:38903003`). Options: `--no-refs` (arXiv only), `--no-cache`, `--abstract-only` (skip body fetch, ~200 tokens; useful for triage)
+- `paper7 cite <id>` — Format bibliographic citation. Options: `--format bibtex|apa|abnt`. Accepts arXiv, `doi:` or `pmid:` IDs.
 - `paper7 repo <id>` — Find GitHub repository URLs linked in the paper
 - `paper7 list` — Show all cached papers with ID and title
 - `paper7 cache clear [id]` — Clear all cache or remove specific paper

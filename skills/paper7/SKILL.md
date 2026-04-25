@@ -130,6 +130,7 @@ paper7 <command> [options]
 Commands:
   search <query>       Search arXiv by keyword
   get <id|url>         Fetch paper as Markdown
+  cite <id>            Format citation: --format bibtex|apa|abnt
   repo <id>            Find GitHub repos for a paper
   list                 Show cached papers
   cache clear [id]     Clear cache
@@ -144,6 +145,7 @@ Get options:
   --no-cache           Force re-download
   --detailed           Emit the full paper instead of the compact indexed header
   --range START:END    Detailed-only line slice from the full paper
+  --abstract-only      Print only title + metadata + abstract (skips full text)
 
 KB subcommands:
   kb ingest <id>       Fetch paper to sources/ and print for agent

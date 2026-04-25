@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="0.5.1"
+VERSION="0.6.0"
 CACHE_DIR="${HOME}/.paper7/cache"
 AR5IV_URL="https://ar5iv.labs.arxiv.org/html"
 ARXIV_API="http://export.arxiv.org/api/query"
@@ -45,6 +45,7 @@ ${BOLD}Commands:${RESET}
   get <id>             Fetch paper; compact header by default, full text with --detailed
                        id shapes: arXiv (YYMM.NNNNN), pmid:NNN, doi:10.XXXX/...
   refs <id>            List references of a paper via Semantic Scholar (requires jq)
+  cite <id>            Format citation (--format bibtex|apa|abnt)
   repo <id>            Find GitHub repositories for a paper
   list                 List cached papers in your KB
   cache clear [id]     Clear cache (all or specific paper)
@@ -84,6 +85,10 @@ parse_arxiv_id() {
   id="${id#http://arxiv.org/abs/}"
   id="${id#https://ar5iv.labs.arxiv.org/html/}"
   id="${id#http://ar5iv.labs.arxiv.org/html/}"
+
+  # Strip arxiv:/arXiv: prefix for consistency with pmid: and doi: shapes.
+  id="${id#arxiv:}"
+  id="${id#arXiv:}"
 
   # Remove version suffix (v1, v2, etc)
   id="${id%v[0-9]*}"
@@ -481,6 +486,7 @@ cmd_get() {
   local no_refs=false
   local no_tldr=false
   local detailed=false
+  local abstract_only=false
   local range_spec=""
   local input=""
 
@@ -490,6 +496,7 @@ cmd_get() {
       --no-refs)  no_refs=true; shift ;;
       --no-tldr)  no_tldr=true; shift ;;
       --detailed) detailed=true; shift ;;
+      --abstract-only) abstract_only=true; shift ;;
       --range)
         if [ $# -lt 2 ]; then
           err "missing value for --range"
@@ -500,18 +507,19 @@ cmd_get() {
         ;;
       --help|-h)
         cat <<EOF
-Usage: paper7 get <id> [--no-refs] [--no-cache] [--no-tldr] [--detailed] [--range START:END]
+Usage: paper7 get <id> [--no-refs] [--no-cache] [--no-tldr] [--detailed] [--range START:END] [--abstract-only]
 
 IDs:
   arXiv   — e.g. 2401.04088 or https://arxiv.org/abs/2401.04088
   PubMed  — e.g. pmid:38903003
 
 Options:
-  --no-refs     Strip References section (arXiv only; no-op for PubMed)
-  --no-cache    Force re-download, bypassing local cache
-  --no-tldr     Skip the Semantic Scholar TLDR enrichment lookup
-  --detailed    Print the full paper instead of the compact indexed header
-  --range       Detailed-only line slice, format: START:END
+  --no-refs        Strip References section (arXiv only; no-op for PubMed)
+  --no-cache       Force re-download, bypassing local cache
+  --no-tldr        Skip the Semantic Scholar TLDR enrichment lookup
+  --detailed       Print the full paper instead of the compact indexed header
+  --range          Detailed-only line slice, format: START:END
+  --abstract-only  Print only title + metadata + abstract (skips full text fetch)
 EOF
         return 0
         ;;
@@ -538,7 +546,7 @@ EOF
     if [ "$no_refs" = true ]; then
       info "note: --no-refs has no effect for DOI fetches"
     fi
-    cmd_get_doi "$doi" "$no_cache" "$no_tldr" "$detailed" "$range_spec"
+    cmd_get_doi "$doi" "$no_cache" "$no_tldr" "$detailed" "$range_spec" "$abstract_only"
     return $?
   fi
 
@@ -548,13 +556,13 @@ EOF
     if [ "$no_refs" = true ]; then
       info "note: --no-refs has no effect for PubMed abstracts"
     fi
-    cmd_get_pubmed "$pmid" "$no_cache" "$no_tldr" "$detailed" "$range_spec"
+    cmd_get_pubmed "$pmid" "$no_cache" "$no_tldr" "$detailed" "$range_spec" "$abstract_only"
     return $?
   fi
 
   local id
   id=$(parse_arxiv_id "$input") || return 1
-  cmd_get_arxiv "$id" "$no_cache" "$no_refs" "$no_tldr" "$detailed" "$range_spec"
+  cmd_get_arxiv "$id" "$no_cache" "$no_refs" "$no_tldr" "$detailed" "$range_spec" "$abstract_only"
 }
 
 cmd_get_arxiv() {
@@ -564,13 +572,14 @@ cmd_get_arxiv() {
   local no_tldr="${4:-false}"
   local detailed="${5:-false}"
   local range_spec="${6:-}"
+  local abstract_only="${7:-false}"
 
   local dir="${CACHE_DIR}/${id}"
   local cache_file="${dir}/paper.md"
   local meta_file="${dir}/meta.json"
 
-  # Check cache
-  if [ "$no_cache" = false ] && [ -f "$cache_file" ]; then
+  # Check cache (skipped for --abstract-only — full cache may contain body sections)
+  if [ "$abstract_only" = false ] && [ "$no_cache" = false ] && [ -f "$cache_file" ]; then
     info "cached: $cache_file"
     emit_paper_output "$cache_file" "$dir" "$id" "$no_refs" "$detailed" "$range_spec"
     return 0
@@ -597,7 +606,25 @@ cmd_get_arxiv() {
   local abstract
   abstract=$(tr '\n' ' ' < "$api_file" | sed -n 's:.*<summary>\(.*\)</summary>.*:\1:p' | tail -1 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' || true)
 
+  local published_year
+  published_year=$(sed -n 's|.*<published>\([0-9]\{4\}\).*|\1|p' "$api_file" 2>/dev/null | head -1 || true)
+  [ -z "$published_year" ] && published_year="Unknown"
+
   rm -f "$api_file"
+
+  # Short-circuit for --abstract-only: emit lightweight header and return,
+  # skipping the ~3MB ar5iv HTML fetch and conversion.
+  if [ "$abstract_only" = true ]; then
+    cat <<EOF
+# ${title}
+**arXiv:** ${id}  **DOI:** 10.48550/arXiv.${id}  **Year:** ${published_year}  **Venue:** arXiv preprint
+
+## Abstract
+
+${abstract}
+EOF
+    return 0
+  fi
 
   # Fetch full text from ar5iv
   info "fetching ${AR5IV_URL}/${id} ..."
@@ -715,13 +742,14 @@ cmd_get_pubmed() {
   local no_tldr="${3:-false}"
   local detailed="${4:-false}"
   local range_spec="${5:-}"
+  local abstract_only="${6:-false}"
 
   local dir="${CACHE_DIR}/pmid-${pmid}"
   local cache_file="${dir}/paper.md"
   local meta_file="${dir}/meta.json"
 
-  # Check cache
-  if [ "$no_cache" = false ] && [ -f "$cache_file" ]; then
+  # Check cache (skipped for --abstract-only)
+  if [ "$abstract_only" = false ] && [ "$no_cache" = false ] && [ -f "$cache_file" ]; then
     info "cached: $cache_file"
     emit_paper_output "$cache_file" "$dir" "pmid:${pmid}" false "$detailed" "$range_spec"
     return 0
@@ -855,6 +883,22 @@ cmd_get_pubmed() {
   ')
   [ -z "$abstract" ] && abstract="(no abstract available)"
 
+  # Short-circuit for --abstract-only: emit lightweight header and return.
+  # No body fetch happens for PubMed; this still skips cache write.
+  if [ "$abstract_only" = true ]; then
+    rm -f "$xml_file"
+    rmdir "$dir" 2>/dev/null || true
+    cat <<EOF
+# ${title}
+**PMID:** ${pmid}  **Year:** ${pubyear:-Unknown}  **Venue:** ${journal:-Unknown}
+
+## Abstract
+
+${abstract}
+EOF
+    return 0
+  fi
+
   # --- Write Markdown ---
   # --- TLDR via Semantic Scholar (best-effort) ---
   local tldr=""
@@ -919,13 +963,14 @@ cmd_get_doi() {
   local no_tldr="${3:-false}"
   local detailed="${4:-false}"
   local range_spec="${5:-}"
+  local abstract_only="${6:-false}"
 
   # Auto-redirect arXiv DOIs (10.48550/arXiv.YYMM.NNNNN) → cmd_get_arxiv,
   # so they share the existing arXiv cache and don't duplicate.
   if [[ "$doi" =~ ^10\.48550/arXiv\.([0-9]{4}\.[0-9]{4,5})$ ]]; then
     local arxiv_id="${BASH_REMATCH[1]}"
     info "DOI is arXiv mirror; redirecting to arXiv path for $arxiv_id"
-    cmd_get_arxiv "$arxiv_id" "$no_cache" "false" "$no_tldr" "$detailed" "$range_spec"
+    cmd_get_arxiv "$arxiv_id" "$no_cache" "false" "$no_tldr" "$detailed" "$range_spec" "$abstract_only"
     return $?
   fi
 
@@ -937,8 +982,8 @@ cmd_get_doi() {
   local cache_file="${dir}/paper.md"
   local meta_file="${dir}/meta.json"
 
-  # Cache hit
-  if [ "$no_cache" = false ] && [ -f "$cache_file" ]; then
+  # Cache hit (skipped for --abstract-only)
+  if [ "$abstract_only" = false ] && [ "$no_cache" = false ] && [ -f "$cache_file" ]; then
     info "cached: $cache_file"
     emit_paper_output "$cache_file" "$dir" "doi:${doi}" false "$detailed" "$range_spec"
     return 0
@@ -1027,6 +1072,21 @@ cmd_get_doi() {
   fi
   if [ -z "$abstract" ]; then
     abstract="(no abstract available; full text at ${full_text_url})"
+  fi
+
+  # Short-circuit for --abstract-only: emit lightweight header and return,
+  # skipping cache write and TLDR enrichment.
+  if [ "$abstract_only" = true ]; then
+    rmdir "$dir" 2>/dev/null || true
+    cat <<EOF
+# ${title}
+**DOI:** ${doi}  **Year:** ${year}  **Venue:** ${source}
+
+## Abstract
+
+${abstract}
+EOF
+    return 0
   fi
 
   # TLDR via Semantic Scholar (best-effort)
@@ -1184,6 +1244,282 @@ cmd_refs_s2() {
   rc=$?
   rm -f "$tmp_response"
   return $rc
+}
+
+# ============================================================================
+# cmd_cite — format bibliographic citations
+# ============================================================================
+
+cmd_cite() {
+  local format="bibtex"
+  local input=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --format)
+        if [ $# -lt 2 ]; then
+          err "missing value for --format"
+          return 1
+        fi
+        format="$2"
+        shift 2
+        ;;
+      --help|-h)
+        cat <<EOF
+Usage: paper7 cite <id> --format <bibtex|apa|abnt>
+
+Formats a bibliographic citation for a paper, fetched from Crossref / arXiv / PubMed.
+
+IDs:
+  arXiv   — e.g. 1706.03762 or arxiv:1706.03762
+  PubMed  — e.g. pmid:38903003
+  DOI     — e.g. doi:10.1126/science.1439786
+
+Formats:
+  bibtex  — BibTeX entry (default)
+  apa     — APA 7th edition
+  abnt    — ABNT NBR 6023 (Brazilian)
+EOF
+        return 0
+        ;;
+      -*) err "unknown flag: $1"; return 1 ;;
+      *)  input="$1"; shift ;;
+    esac
+  done
+
+  if [ -z "$input" ]; then
+    err "missing paper ID. Usage: paper7 cite <id> --format <bibtex|apa|abnt>"
+    return 1
+  fi
+
+  case "$format" in
+    bibtex|apa|abnt) ;;
+    *) err "unknown format: $format (allowed: bibtex|apa|abnt)"; return 1 ;;
+  esac
+
+  # Shared metadata fields populated by loaders, consumed by renderers.
+  local title="" authors_raw="" year="" journal="" volume="" issue="" pages="" doi="" arxiv_id="" pmid=""
+
+  if is_doi_input "$input"; then
+    doi=$(parse_doi "$input") || return 1
+    _cite_load_doi_meta "$doi" || return 1
+  elif is_pmid_input "$input"; then
+    pmid=$(parse_pmid "$input") || return 1
+    _cite_load_pmid_meta "$pmid" || return 1
+  else
+    arxiv_id=$(parse_arxiv_id "$input") || return 1
+    _cite_load_arxiv_meta "$arxiv_id" || return 1
+  fi
+
+  case "$format" in
+    bibtex) _cite_render_bibtex ;;
+    apa)    _cite_render_apa ;;
+    abnt)   _cite_render_abnt ;;
+  esac
+}
+
+# --- arXiv metadata loader (uses arXiv API Atom feed) ---
+_cite_load_arxiv_meta() {
+  local id="$1"
+  local tmp_response http_code
+  tmp_response=$(mktemp)
+  http_code=$(curl -sL -o "$tmp_response" -w "%{http_code}" \
+    "${ARXIV_API}?id_list=${id}&max_results=1")
+  if [ "$http_code" != "200" ] || [ ! -s "$tmp_response" ]; then
+    rm -f "$tmp_response"
+    err "failed to fetch arXiv metadata for ${id}"
+    return 1
+  fi
+  title=$(sed -n 's/.*<title>\(.*\)<\/title>.*/\1/p' "$tmp_response" 2>/dev/null | tail -1 | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+  authors_raw=$(sed -n 's/.*<name>\(.*\)<\/name>.*/\1/p' "$tmp_response" 2>/dev/null | paste -sd '|' -)
+  year=$(sed -n 's|.*<published>\([0-9]\{4\}\).*|\1|p' "$tmp_response" 2>/dev/null | head -1)
+  journal="arXiv preprint"
+  doi="10.48550/arXiv.${id}"
+  arxiv_id="${id}"
+  rm -f "$tmp_response"
+}
+
+# --- DOI metadata loader (Crossref) ---
+_cite_load_doi_meta() {
+  local d="$1"
+  s2_check_jq || return 1
+  local tmp_response http_code
+  tmp_response=$(mktemp)
+  http_code=$(curl -sL -o "$tmp_response" -w "%{http_code}" \
+    "${CROSSREF_API}/${d}?mailto=${CROSSREF_MAILTO}")
+  if [ "$http_code" != "200" ] || [ ! -s "$tmp_response" ]; then
+    rm -f "$tmp_response"
+    err "failed to fetch Crossref metadata for ${d}"
+    return 1
+  fi
+  # Single jq call extracting all fields tab-separated; cuts 7 process spawns to 1.
+  local fields
+  fields=$(jq -r '
+    [
+      (.message.title[0] // ""),
+      ([.message.author[]? | (.given // "") + " " + (.family // "") | gsub("^ +| +$"; "")] | join("|")),
+      ((.message.issued."date-parts"[0][0] // .message.created."date-parts"[0][0] // "") | tostring),
+      (.message["container-title"][0] // .message.publisher // ""),
+      (.message.volume // ""),
+      (.message.issue // ""),
+      (.message.page // "")
+    ] | @tsv
+  ' < "$tmp_response")
+  IFS=$'\t' read -r title authors_raw year journal volume issue pages <<<"$fields"
+  doi="$d"
+  rm -f "$tmp_response"
+}
+
+# --- PubMed metadata loader (ESummary) ---
+_cite_load_pmid_meta() {
+  local p="$1"
+  s2_check_jq || return 1
+  local tmp_response http_code
+  tmp_response=$(mktemp)
+  http_code=$(curl -sL -o "$tmp_response" -w "%{http_code}" \
+    "${PUBMED_ESUMMARY}?db=pubmed&id=${p}&retmode=json")
+  if [ "$http_code" != "200" ] || [ ! -s "$tmp_response" ]; then
+    rm -f "$tmp_response"
+    err "failed to fetch PubMed metadata for pmid:${p}"
+    return 1
+  fi
+  # Single jq call extracting all fields tab-separated; cuts 8 process spawns to 1.
+  local fields
+  fields=$(jq -r --arg p "$p" '
+    .result[$p] as $r |
+    [
+      ($r.title // ""),
+      ([$r.authors[]? | .name] | join("|")),
+      (($r.pubdate // "") | .[0:4]),
+      ($r.fulljournalname // $r.source // ""),
+      ($r.volume // ""),
+      ($r.issue // ""),
+      ($r.pages // ""),
+      (([$r.articleids[]? | select(.idtype=="doi") | .value] | first) // "")
+    ] | @tsv
+  ' < "$tmp_response")
+  IFS=$'\t' read -r title authors_raw year journal volume issue pages doi <<<"$fields"
+  pmid="$p"
+  rm -f "$tmp_response"
+}
+
+# --- BibTeX renderer ---
+_cite_render_bibtex() {
+  local first_author_last first_word entry_key
+  first_author_last=$(printf '%s' "$authors_raw" | cut -d'|' -f1 | awk '{print tolower($NF)}')
+  first_word=$(printf '%s' "$title" | awk '{ for(i=1;i<=NF;i++){ w=tolower($i); gsub(/[^a-z0-9]/,"",w); if(length(w)>3){print w; exit} } }')
+  entry_key="${first_author_last}${year}${first_word}"
+  [ -z "$entry_key" ] && entry_key="paper${year}"
+
+  local authors_bibtex
+  authors_bibtex=$(printf '%s' "$authors_raw" | sed 's/|/ and /g')
+
+  printf '@article{%s,\n' "$entry_key"
+  printf '  title = {%s},\n' "$title"
+  printf '  author = {%s},\n' "$authors_bibtex"
+  [ -n "$journal" ] && printf '  journal = {%s},\n' "$journal"
+  [ -n "$year" ]    && printf '  year = {%s},\n' "$year"
+  [ -n "$volume" ]  && printf '  volume = {%s},\n' "$volume"
+  [ -n "$issue" ]   && printf '  number = {%s},\n' "$issue"
+  [ -n "$pages" ]   && printf '  pages = {%s},\n' "$pages"
+  [ -n "$doi" ]     && printf '  doi = {%s},\n' "$doi"
+  printf '}\n'
+}
+
+# --- APA renderer (APA 7) ---
+_cite_render_apa() {
+  # APA 7: Authors. (Year). Title. *Journal*, Volume(Issue), Pages. https://doi.org/...
+  # Authors formatted as "Last, F. M., Last2, F. M., & Last3, F. M."
+  local authors_apa
+  authors_apa=$(printf '%s' "$authors_raw" | awk -F'|' '
+    function format_author(name,    parts, last, initials, i, n) {
+      n = split(name, parts, " ")
+      if (n < 2) return name
+      last = parts[n]
+      initials = ""
+      for (i = 1; i < n; i++) {
+        if (length(parts[i]) > 0) initials = initials substr(parts[i], 1, 1) ". "
+      }
+      sub(/ $/, "", initials)
+      return last ", " initials
+    }
+    {
+      out = ""
+      for (i = 1; i <= NF; i++) {
+        a = format_author($i)
+        if (i == 1)               out = a
+        else if (i == NF && NF>1) out = out ", & " a
+        else                       out = out ", " a
+      }
+      print out
+    }')
+
+  local out_line
+  out_line="${authors_apa} (${year}). ${title}."
+  if [ -n "$journal" ]; then
+    out_line="${out_line} *${journal}*"
+    if [ -n "$volume" ]; then
+      out_line="${out_line}, ${volume}"
+      [ -n "$issue" ] && out_line="${out_line}(${issue})"
+    fi
+    [ -n "$pages" ] && out_line="${out_line}, ${pages}"
+    out_line="${out_line}."
+  fi
+  if [ -n "$doi" ]; then
+    out_line="${out_line} https://doi.org/${doi}"
+  fi
+
+  printf '%s\n' "$out_line"
+}
+
+# --- ABNT renderer (NBR 6023, simplified) ---
+_cite_render_abnt() {
+  # SURNAME, F. M.; SURNAME2, F. M. Title. *Journal*, v. N, n. N, p. S-E, ano. Disponível em: <url>.
+  # >3 authors: first + "et al"
+  local authors_abnt
+  authors_abnt=$(printf '%s' "$authors_raw" | awk -F'|' '
+    function format_author(name,    parts, last, initials, i, n) {
+      n = split(name, parts, " ")
+      if (n < 2) return toupper(name)
+      last = toupper(parts[n])
+      initials = ""
+      for (i = 1; i < n; i++) {
+        if (length(parts[i]) > 0) initials = initials substr(parts[i], 1, 1) ". "
+      }
+      sub(/ $/, "", initials)
+      return last ", " initials
+    }
+    {
+      if (NF > 3) {
+        print format_author($1) " et al"
+      } else {
+        out = ""
+        for (i = 1; i <= NF; i++) {
+          a = format_author($i)
+          if (i == 1) out = a
+          else        out = out "; " a
+        }
+        print out
+      }
+    }')
+
+  local out_line
+  out_line="${authors_abnt}. ${title}."
+  if [ -n "$journal" ]; then
+    out_line="${out_line} *${journal}*"
+    [ -n "$volume" ] && out_line="${out_line}, v. ${volume}"
+    [ -n "$issue" ]  && out_line="${out_line}, n. ${issue}"
+    [ -n "$pages" ]  && out_line="${out_line}, p. ${pages}"
+    [ -n "$year" ]   && out_line="${out_line}, ${year}"
+    out_line="${out_line}."
+  elif [ -n "$year" ]; then
+    out_line="${out_line} ${year}."
+  fi
+  if [ -n "$doi" ]; then
+    out_line="${out_line} Disponível em: https://doi.org/${doi}."
+  fi
+
+  printf '%s\n' "$out_line"
 }
 
 cmd_search() {
@@ -1904,8 +2240,10 @@ cmd_kb() {
       info "fetching $paper_id → $out_file"
       bash "$0" get "$paper_id" --detailed --no-refs "$@" > "$out_file"
 
+      # Find first H1 line, skipping any prompt-injection boundary marker.
       local title
-      title=$(head -1 "$out_file" | sed 's/^# //')
+      title=$(grep -m1 '^# ' "$out_file" | sed 's/^# //')
+      [ -z "$title" ] && title="$paper_id"
 
       printf '## [%s] ingest | %s\n\nSource: %s  \nFile: %s\n\n' \
         "$(date +%Y-%m-%d)" "$title" "$paper_id" "$out_file" >> "$WIKI_LOG"
@@ -1921,10 +2259,40 @@ cmd_kb() {
         err "usage: paper7 kb write <slug>"
         return 1
       fi
+      # Reserved slugs — paper7 auto-maintains index.md and log.md at wiki/ root.
+      # Writing a page named "index" or "log" would shadow them and confuse readers.
+      case "$slug" in
+        index|log)
+          err "'${slug}' is a reserved slug — paper7 auto-maintains it. Use a topic slug."
+          return 1 ;;
+      esac
       _kb_init
       local page_file="${WIKI_PAGES}/${slug}.md"
-      cat > "$page_file"
+      # Stage via tempfile to avoid self-truncation when stdin is the same file
+      # (e.g. `paper7 kb write foo < pages/foo.md` would otherwise wipe foo.md
+      # before reading it, because the shell opens `>` before `<`).
+      local tmp_page
+      tmp_page=$(mktemp)
+      cat > "$tmp_page"
+      mv "$tmp_page" "$page_file"
       echo -e "${GREEN}wrote${RESET} $page_file"
+
+      # Auto-update root index.md: replace existing row for slug, or append a new one.
+      local title summary today
+      title=$(head -1 "$page_file" | sed 's/^#\+[[:space:]]*//')
+      [ -z "$title" ] && title="$slug"
+      summary=$(awk 'NR>1 && NF && !/^[[:space:]]*#/ { print; exit }' "$page_file" | head -c 120)
+      today=$(date +%Y-%m-%d)
+      # Drop any pre-existing row for this slug (header lines stay).
+      local tmp_index
+      tmp_index=$(mktemp)
+      grep -v "^| \[${slug}\]" "$WIKI_INDEX" > "$tmp_index" || true
+      mv "$tmp_index" "$WIKI_INDEX"
+      printf '| [%s](pages/%s.md) | %s | %s |\n' "$slug" "$slug" "${summary:-$title}" "$today" >> "$WIKI_INDEX"
+
+      # Append log entry — Karpathy's parseable format.
+      printf '## [%s] write | %s\n\nSlug: %s  \nTitle: %s\n\n' \
+        "$today" "$title" "$slug" "$title" >> "$WIKI_LOG"
       ;;
 
     read)
@@ -1932,6 +2300,7 @@ cmd_kb() {
         err "usage: paper7 kb read <slug|index|log>"
         return 1
       fi
+      _kb_init
       case "$1" in
         index) cat "$WIKI_INDEX" ;;
         log)   cat "$WIKI_LOG"   ;;
@@ -1963,13 +2332,13 @@ cmd_kb() {
       echo -e "${BOLD}Pages${RESET} (${WIKI_PAGES})"
       for f in "${WIKI_PAGES}"/*.md; do
         [ -f "$f" ] || continue
-        printf "  %s — %s\n" "$(basename "$f" .md)" "$(head -1 "$f" | sed 's/^# //')"
+        printf "  %s — %s\n" "$(basename "$f" .md)" "$(grep -m1 '^# ' "$f" | sed 's/^# //')"
       done
       echo ""
       echo -e "${BOLD}Sources${RESET} (${WIKI_SOURCES})"
       for f in "${WIKI_SOURCES}"/*.md; do
         [ -f "$f" ] || continue
-        printf "  %s — %s\n" "$(basename "$f" .md)" "$(head -1 "$f" | sed 's/^# //')"
+        printf "  %s — %s\n" "$(basename "$f" .md)" "$(grep -m1 '^# ' "$f" | sed 's/^# //')"
       done
       ;;
 
@@ -2040,6 +2409,7 @@ main() {
     vault)      cmd_vault "$@" ;;
     browse)     cmd_browse "$@" ;;
     refs)       cmd_refs "$@" ;;
+    cite)       cmd_cite "$@" ;;
     kb)         cmd_kb "$@" ;;
     help|--help|-h)  usage ;;
     --version|-v)    echo "paper7 $VERSION" ;;

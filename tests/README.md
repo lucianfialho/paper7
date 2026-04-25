@@ -36,3 +36,5 @@ Each test script prints colored pass/fail lines and exits non-zero on failure
 | `test_browse.sh` | `paper7 browse` pure helpers + guard paths (interactive fzf part is manual) | #7 |
 | `test_s2.sh` | `paper7 refs` + TLDR enrichment in `get` (skips on S2 rate limit) | #9 |
 | `test_doi.sh` | `paper7 get doi:<DOI>` via Crossref + arXiv-DOI auto-redirect | #11 |
+| `test_abstract_only.sh` | `paper7 get <id> --abstract-only` for arXiv/PubMed/DOI | — |
+| `test_cite.sh` | `paper7 cite <id> --format bibtex\|apa\|abnt` + error paths | — |

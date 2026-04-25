@@ -22,6 +22,9 @@ npx skills add lucianfialho/paper7 --skill paper7
 
 # Research skill — guided literature review before implementation
 npx skills add lucianfialho/paper7 --skill paper7-research
+
+# Deep-research skill — ask a question, get a synthesized citation-grounded answer
+npx skills add lucianfialho/paper7 --skill paper7-ask
 ```
 
 Or manually as a Claude Code slash command:
@@ -63,6 +66,14 @@ paper7 repo 2401.04088
 # List references via Semantic Scholar (requires jq)
 paper7 refs 1706.03762 --max 5
 paper7 refs 1706.03762 --json | jq '.data | length'   # pipe raw JSON
+
+# Lightweight metadata + abstract (cheap triage, ~200 tokens)
+paper7 get 1706.03762 --abstract-only
+
+# Format a citation
+paper7 cite 1706.03762 --format bibtex
+paper7 cite doi:10.1126/science.1439786 --format apa
+paper7 cite pmid:38903003 --format abnt
 
 # Manage your local cache
 paper7 list                                     # show cached papers
