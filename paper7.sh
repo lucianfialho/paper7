@@ -86,6 +86,10 @@ parse_arxiv_id() {
   id="${id#https://ar5iv.labs.arxiv.org/html/}"
   id="${id#http://ar5iv.labs.arxiv.org/html/}"
 
+  # Strip arxiv:/arXiv: prefix for consistency with pmid: and doi: shapes.
+  id="${id#arxiv:}"
+  id="${id#arXiv:}"
+
   # Remove version suffix (v1, v2, etc)
   id="${id%v[0-9]*}"
 
