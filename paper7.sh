@@ -2238,10 +2238,34 @@ cmd_kb() {
         err "usage: paper7 kb write <slug>"
         return 1
       fi
+      # Reserved slugs — paper7 auto-maintains index.md and log.md at wiki/ root.
+      # Writing a page named "index" or "log" would shadow them and confuse readers.
+      case "$slug" in
+        index|log)
+          err "'${slug}' is a reserved slug — paper7 auto-maintains it. Use a topic slug."
+          return 1 ;;
+      esac
       _kb_init
       local page_file="${WIKI_PAGES}/${slug}.md"
       cat > "$page_file"
       echo -e "${GREEN}wrote${RESET} $page_file"
+
+      # Auto-update root index.md: replace existing row for slug, or append a new one.
+      local title summary today
+      title=$(head -1 "$page_file" | sed 's/^#\+[[:space:]]*//')
+      [ -z "$title" ] && title="$slug"
+      summary=$(awk 'NR>1 && NF { print; exit }' "$page_file" | head -c 120)
+      today=$(date +%Y-%m-%d)
+      # Drop any pre-existing row for this slug (header lines stay).
+      local tmp_index
+      tmp_index=$(mktemp)
+      grep -v "^| \[${slug}\]" "$WIKI_INDEX" > "$tmp_index" || true
+      mv "$tmp_index" "$WIKI_INDEX"
+      printf '| [%s](pages/%s.md) | %s | %s |\n' "$slug" "$slug" "${summary:-$title}" "$today" >> "$WIKI_INDEX"
+
+      # Append log entry — Karpathy's parseable format.
+      printf '## [%s] write | %s\n\nSlug: %s  \nTitle: %s\n\n' \
+        "$today" "$title" "$slug" "$title" >> "$WIKI_LOG"
       ;;
 
     read)
