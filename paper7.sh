@@ -2249,6 +2249,7 @@ cmd_kb() {
         err "usage: paper7 kb read <slug|index|log>"
         return 1
       fi
+      _kb_init
       case "$1" in
         index) cat "$WIKI_INDEX" ;;
         log)   cat "$WIKI_LOG"   ;;
