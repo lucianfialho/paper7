@@ -1,0 +1,5 @@
+# Local-only working notes (specs, plans, brainstorms — never shared)
+docs/superpowers/
+
+# Local Claude Code project skill discovery (symlinks pointing into skills/)
+.claude/
