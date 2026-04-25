@@ -92,11 +92,21 @@ raw source.
 
 ### 4. Read
 
-For each top-K paper:
+For each paper that survived triage (your top-K — the ones you commit to
+citing in the synthesis):
 
-- If you need full content for synthesis: `paper7 kb ingest <id>` (this both
-  fetches into `kb sources/` AND prints content for you to read).
-- If abstract is sufficient (most cases): `paper7 get <id> --abstract-only`.
+- **Default — `paper7 kb ingest <id>`.** Fetches full text AND persists
+  into `~/.paper7/wiki/sources/`. Use this for every paper you plan to
+  cite. Sources are corpus that compounds — future questions on adjacent
+  topics will reach back into them via step 0. If you only `--abstract-only`,
+  the corpus stays empty and the next session re-fetches everything.
+- **Exception — `paper7 get <id> --abstract-only`.** Use ONLY when you
+  are still triaging and not yet sure a paper belongs in top-K. The flag
+  exists for borderline candidates, not for the papers you've already
+  decided to use.
+
+Rule of thumb: if the paper appears in your bibliography at the end, it
+must have been ingested in this step. No exceptions.
 
 Extract 1-3 quotes per paper, each tagged with the paper identifier.
 
@@ -186,5 +196,6 @@ Print the synthesized markdown answer to the conversation. Mention briefly:
 | Reading 20+ papers | Token bloat. 5-10 is the right range. |
 | Skipping step 0 (KB check) | Wastes search calls and discards prior synthesis. |
 | Skipping step 8 (file-back) | Loses the synthesis. Future questions start over. |
+| Using `--abstract-only` for top-K | Sources stay empty, corpus never compounds. Default to `kb ingest`. |
 | Slug = literal question | `pitohui-toxicity` not `what-makes-the-pitohui-bird-toxic`. |
 | Inventing a year/author when metadata is missing | Use the real metadata or omit the field. |
