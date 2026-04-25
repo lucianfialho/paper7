@@ -5,7 +5,7 @@ All notable changes to paper7 are documented here.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com).
 Pre-1.0, minor versions may add features; breaking changes (if any) are called out explicitly.
 
-## [0.6.0] — 2026-04-25 (unreleased)
+## [0.6.0] — 2026-04-25
 
 Deep research as a skill: `paper7-ask` orchestrates search → triage → read → synthesize → cite, with file-back into the local KB.
 
