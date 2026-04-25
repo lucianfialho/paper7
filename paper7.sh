@@ -2247,14 +2247,20 @@ cmd_kb() {
       esac
       _kb_init
       local page_file="${WIKI_PAGES}/${slug}.md"
-      cat > "$page_file"
+      # Stage via tempfile to avoid self-truncation when stdin is the same file
+      # (e.g. `paper7 kb write foo < pages/foo.md` would otherwise wipe foo.md
+      # before reading it, because the shell opens `>` before `<`).
+      local tmp_page
+      tmp_page=$(mktemp)
+      cat > "$tmp_page"
+      mv "$tmp_page" "$page_file"
       echo -e "${GREEN}wrote${RESET} $page_file"
 
       # Auto-update root index.md: replace existing row for slug, or append a new one.
       local title summary today
       title=$(head -1 "$page_file" | sed 's/^#\+[[:space:]]*//')
       [ -z "$title" ] && title="$slug"
-      summary=$(awk 'NR>1 && NF { print; exit }' "$page_file" | head -c 120)
+      summary=$(awk 'NR>1 && NF && !/^[[:space:]]*#/ { print; exit }' "$page_file" | head -c 120)
       today=$(date +%Y-%m-%d)
       # Drop any pre-existing row for this slug (header lines stay).
       local tmp_index
