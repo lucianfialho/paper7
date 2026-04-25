@@ -45,6 +45,7 @@ ${BOLD}Commands:${RESET}
   get <id>             Fetch paper; compact header by default, full text with --detailed
                        id shapes: arXiv (YYMM.NNNNN), pmid:NNN, doi:10.XXXX/...
   refs <id>            List references of a paper via Semantic Scholar (requires jq)
+  cite <id>            Format citation (--format bibtex|apa|abnt)
   repo <id>            Find GitHub repositories for a paper
   list                 List cached papers in your KB
   cache clear [id]     Clear cache (all or specific paper)
@@ -1241,6 +1242,183 @@ cmd_refs_s2() {
   return $rc
 }
 
+# ============================================================================
+# cmd_cite — format bibliographic citations
+# ============================================================================
+
+cmd_cite() {
+  local format="bibtex"
+  local input=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --format)
+        if [ $# -lt 2 ]; then
+          err "missing value for --format"
+          return 1
+        fi
+        format="$2"
+        shift 2
+        ;;
+      --help|-h)
+        cat <<EOF
+Usage: paper7 cite <id> --format <bibtex|apa|abnt>
+
+Formats a bibliographic citation for a paper, fetched from Crossref / arXiv / PubMed.
+
+IDs:
+  arXiv   — e.g. 1706.03762 or arxiv:1706.03762
+  PubMed  — e.g. pmid:38903003
+  DOI     — e.g. doi:10.1126/science.1439786
+
+Formats:
+  bibtex  — BibTeX entry (default)
+  apa     — APA 7th edition
+  abnt    — ABNT NBR 6023 (Brazilian)
+EOF
+        return 0
+        ;;
+      -*) err "unknown flag: $1"; return 1 ;;
+      *)  input="$1"; shift ;;
+    esac
+  done
+
+  if [ -z "$input" ]; then
+    err "missing paper ID. Usage: paper7 cite <id> --format <bibtex|apa|abnt>"
+    return 1
+  fi
+
+  case "$format" in
+    bibtex|apa|abnt) ;;
+    *) err "unknown format: $format (allowed: bibtex|apa|abnt)"; return 1 ;;
+  esac
+
+  # Shared metadata fields populated by loaders, consumed by renderers.
+  local title="" authors_raw="" year="" journal="" volume="" issue="" pages="" doi="" arxiv_id="" pmid=""
+
+  if is_doi_input "$input"; then
+    doi=$(parse_doi "$input") || return 1
+    _cite_load_doi_meta "$doi" || return 1
+  elif is_pmid_input "$input"; then
+    pmid=$(parse_pmid "$input") || return 1
+    _cite_load_pmid_meta "$pmid" || return 1
+  else
+    arxiv_id=$(parse_arxiv_id "$input") || return 1
+    _cite_load_arxiv_meta "$arxiv_id" || return 1
+  fi
+
+  case "$format" in
+    bibtex) _cite_render_bibtex ;;
+    apa)    _cite_render_apa ;;
+    abnt)   _cite_render_abnt ;;
+  esac
+}
+
+# --- arXiv metadata loader (uses arXiv API Atom feed) ---
+_cite_load_arxiv_meta() {
+  local id="$1"
+  local tmp_response http_code
+  tmp_response=$(mktemp)
+  http_code=$(curl -sL -o "$tmp_response" -w "%{http_code}" \
+    "${ARXIV_API}?id_list=${id}&max_results=1")
+  if [ "$http_code" != "200" ] || [ ! -s "$tmp_response" ]; then
+    rm -f "$tmp_response"
+    err "failed to fetch arXiv metadata for ${id}"
+    return 1
+  fi
+  title=$(sed -n 's/.*<title>\(.*\)<\/title>.*/\1/p' "$tmp_response" 2>/dev/null | tail -1 | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+  authors_raw=$(sed -n 's/.*<name>\(.*\)<\/name>.*/\1/p' "$tmp_response" 2>/dev/null | paste -sd '|' -)
+  year=$(sed -n 's|.*<published>\([0-9]\{4\}\).*|\1|p' "$tmp_response" 2>/dev/null | head -1)
+  journal="arXiv preprint"
+  doi="10.48550/arXiv.${id}"
+  arxiv_id="${id}"
+  rm -f "$tmp_response"
+}
+
+# --- DOI metadata loader (Crossref) ---
+_cite_load_doi_meta() {
+  local d="$1"
+  s2_check_jq || return 1
+  local tmp_response http_code
+  tmp_response=$(mktemp)
+  http_code=$(curl -sL -o "$tmp_response" -w "%{http_code}" \
+    "${CROSSREF_API}/${d}?mailto=${CROSSREF_MAILTO}")
+  if [ "$http_code" != "200" ] || [ ! -s "$tmp_response" ]; then
+    rm -f "$tmp_response"
+    err "failed to fetch Crossref metadata for ${d}"
+    return 1
+  fi
+  title=$(jq -r '.message.title[0] // ""' < "$tmp_response")
+  authors_raw=$(jq -r '[.message.author[]? | (.given // "") + " " + (.family // "") | gsub("^ +| +$"; "")] | join("|")' < "$tmp_response")
+  year=$(jq -r '(.message.issued."date-parts"[0][0] // .message.created."date-parts"[0][0] // "") | tostring' < "$tmp_response")
+  journal=$(jq -r '(.message["container-title"][0] // .message.publisher // "")' < "$tmp_response")
+  volume=$(jq -r '(.message.volume // "")' < "$tmp_response")
+  issue=$(jq -r '(.message.issue // "")' < "$tmp_response")
+  pages=$(jq -r '(.message.page // "")' < "$tmp_response")
+  doi="$d"
+  rm -f "$tmp_response"
+}
+
+# --- PubMed metadata loader (ESummary) ---
+_cite_load_pmid_meta() {
+  local p="$1"
+  s2_check_jq || return 1
+  local tmp_response http_code
+  tmp_response=$(mktemp)
+  http_code=$(curl -sL -o "$tmp_response" -w "%{http_code}" \
+    "${PUBMED_ESUMMARY}?db=pubmed&id=${p}&retmode=json")
+  if [ "$http_code" != "200" ] || [ ! -s "$tmp_response" ]; then
+    rm -f "$tmp_response"
+    err "failed to fetch PubMed metadata for pmid:${p}"
+    return 1
+  fi
+  title=$(jq -r ".result[\"${p}\"].title // \"\"" < "$tmp_response")
+  authors_raw=$(jq -r "[.result[\"${p}\"].authors[]? | .name] | join(\"|\")" < "$tmp_response")
+  year=$(jq -r ".result[\"${p}\"].pubdate // \"\" | .[0:4]" < "$tmp_response")
+  journal=$(jq -r ".result[\"${p}\"].fulljournalname // .result[\"${p}\"].source // \"\"" < "$tmp_response")
+  volume=$(jq -r ".result[\"${p}\"].volume // \"\"" < "$tmp_response")
+  issue=$(jq -r ".result[\"${p}\"].issue // \"\"" < "$tmp_response")
+  pages=$(jq -r ".result[\"${p}\"].pages // \"\"" < "$tmp_response")
+  doi=$(jq -r "([.result[\"${p}\"].articleids[]? | select(.idtype==\"doi\") | .value] | first) // \"\"" < "$tmp_response")
+  pmid="$p"
+  rm -f "$tmp_response"
+}
+
+# --- BibTeX renderer ---
+_cite_render_bibtex() {
+  local first_author_last first_word entry_key
+  first_author_last=$(printf '%s' "$authors_raw" | cut -d'|' -f1 | awk '{print tolower($NF)}')
+  first_word=$(printf '%s' "$title" | awk '{ for(i=1;i<=NF;i++){ w=tolower($i); gsub(/[^a-z0-9]/,"",w); if(length(w)>3){print w; exit} } }')
+  entry_key="${first_author_last}${year}${first_word}"
+  [ -z "$entry_key" ] && entry_key="paper${year}"
+
+  local authors_bibtex
+  authors_bibtex=$(printf '%s' "$authors_raw" | sed 's/|/ and /g')
+
+  printf '@article{%s,\n' "$entry_key"
+  printf '  title = {%s},\n' "$title"
+  printf '  author = {%s},\n' "$authors_bibtex"
+  [ -n "$journal" ] && printf '  journal = {%s},\n' "$journal"
+  [ -n "$year" ]    && printf '  year = {%s},\n' "$year"
+  [ -n "$volume" ]  && printf '  volume = {%s},\n' "$volume"
+  [ -n "$issue" ]   && printf '  number = {%s},\n' "$issue"
+  [ -n "$pages" ]   && printf '  pages = {%s},\n' "$pages"
+  [ -n "$doi" ]     && printf '  doi = {%s},\n' "$doi"
+  printf '}\n'
+}
+
+# --- APA renderer (stub; implemented in next task) ---
+_cite_render_apa() {
+  err "APA format not yet implemented"
+  return 1
+}
+
+# --- ABNT renderer (stub; implemented in next task) ---
+_cite_render_abnt() {
+  err "ABNT format not yet implemented"
+  return 1
+}
+
 cmd_search() {
   local max_results=10
   local sort_by="relevance"
@@ -2095,6 +2273,7 @@ main() {
     vault)      cmd_vault "$@" ;;
     browse)     cmd_browse "$@" ;;
     refs)       cmd_refs "$@" ;;
+    cite)       cmd_cite "$@" ;;
     kb)         cmd_kb "$@" ;;
     help|--help|-h)  usage ;;
     --version|-v)    echo "paper7 $VERSION" ;;
