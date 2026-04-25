@@ -47,6 +47,20 @@ else
   pass "APA from DOI"
 fi
 
+# --- Test 3: ABNT from PMID ---
+echo "Test 3: paper7 cite pmid:38903003 --format abnt"
+out=$("$PAPER7" cite pmid:38903003 --format abnt 2>&1)
+code=$?
+if [ "$code" -ne 0 ]; then
+  fail "exit code" "expected 0, got $code; output:\n$out"
+elif ! echo "$out" | grep -q "[A-Z]"; then
+  fail "uppercase surnames" "expected last names in ALL CAPS"
+elif ! echo "$out" | grep -qE "(2024|2025)"; then
+  fail "year" "expected 2024 or 2025"
+else
+  pass "ABNT from PMID"
+fi
+
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"
 exit "$FAIL"

@@ -1453,10 +1453,54 @@ _cite_render_apa() {
   printf '%s\n' "$out_line"
 }
 
-# --- ABNT renderer (stub; implemented in next task) ---
+# --- ABNT renderer (NBR 6023, simplified) ---
 _cite_render_abnt() {
-  err "ABNT format not yet implemented"
-  return 1
+  # SURNAME, F. M.; SURNAME2, F. M. Title. *Journal*, v. N, n. N, p. S-E, ano. Disponível em: <url>.
+  # >3 authors: first + "et al"
+  local authors_abnt
+  authors_abnt=$(printf '%s' "$authors_raw" | awk -F'|' '
+    function format_author(name,    parts, last, initials, i, n) {
+      n = split(name, parts, " ")
+      if (n < 2) return toupper(name)
+      last = toupper(parts[n])
+      initials = ""
+      for (i = 1; i < n; i++) {
+        if (length(parts[i]) > 0) initials = initials substr(parts[i], 1, 1) ". "
+      }
+      sub(/ $/, "", initials)
+      return last ", " initials
+    }
+    {
+      if (NF > 3) {
+        print format_author($1) " et al"
+      } else {
+        out = ""
+        for (i = 1; i <= NF; i++) {
+          a = format_author($i)
+          if (i == 1) out = a
+          else        out = out "; " a
+        }
+        print out
+      }
+    }')
+
+  local out_line
+  out_line="${authors_abnt}. ${title}."
+  if [ -n "$journal" ]; then
+    out_line="${out_line} *${journal}*"
+    [ -n "$volume" ] && out_line="${out_line}, v. ${volume}"
+    [ -n "$issue" ]  && out_line="${out_line}, n. ${issue}"
+    [ -n "$pages" ]  && out_line="${out_line}, p. ${pages}"
+    [ -n "$year" ]   && out_line="${out_line}, ${year}"
+    out_line="${out_line}."
+  elif [ -n "$year" ]; then
+    out_line="${out_line} ${year}."
+  fi
+  if [ -n "$doi" ]; then
+    out_line="${out_line} Disponível em: https://doi.org/${doi}."
+  fi
+
+  printf '%s\n' "$out_line"
 }
 
 cmd_search() {
