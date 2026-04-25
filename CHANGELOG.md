@@ -5,6 +5,19 @@ All notable changes to paper7 are documented here.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com).
 Pre-1.0, minor versions may add features; breaking changes (if any) are called out explicitly.
 
+## [0.5.1] — 2026-04-25
+
+Fixes hierarchical section ranges in the compact header.
+
+### Fixed
+
+- **Section ranges now cover full blocks, not just heading lines.** The index parser was flat — `Experiments | 82-83` showed only the heading row. A stack-based awk parser now computes each section's range as the span of all its descendants, so `Experiments` correctly becomes `[Experiments](#L82-L115)`. Agents fetching that range now receive the full section content.
+- Spurious H1 lines (e.g. LoRA's `# of Trainable Parameters = 18M…` table caption) are now dropped from the index.
+
+### Changed
+
+- Index format changed from a Markdown table to a nested bullet list (`- [Title](#Lstart-Lend)`) with 2-space indentation per nesting level. Smaller output; hierarchy is visually explicit.
+
 ## [0.5.0] — 2026-04-24
 
 LLM Wiki knowledge base + prompt injection boundary markers.
