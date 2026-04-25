@@ -92,7 +92,7 @@ raw source.
 
 ### 4. Read
 
-For each paper that survived triage (your top-K — the ones you commit to
+For each paper that survived triage (your top picks — the ones you commit to
 citing in the synthesis):
 
 - **Default — `paper7 kb ingest <id>`.** Fetches full text AND persists
@@ -101,7 +101,7 @@ citing in the synthesis):
   topics will reach back into them via step 0. If you only `--abstract-only`,
   the corpus stays empty and the next session re-fetches everything.
 - **Exception — `paper7 get <id> --abstract-only`.** Use ONLY when you
-  are still triaging and not yet sure a paper belongs in top-K. The flag
+  are still triaging and not yet sure a paper belongs in top picks. The flag
   exists for borderline candidates, not for the papers you've already
   decided to use.
 
@@ -159,13 +159,10 @@ If the slug already exists in `paper7 kb read index`, decide:
   <slug>`.
 - Variant: use a more specific slug (e.g. `pitohui-toxicity-mechanism`).
 
-After `kb write`, update the index and log so the catalog stays current —
-paper7 kb does not auto-maintain these. Read the current index/log, append
-your entries, and write them back.
-
-The log entry format follows the LLM Wiki pattern from Karpathy's gist —
-each entry starts with `## [<date>] <op> | <description>` so simple shell
-tools can parse it later.
+`paper7 kb write` auto-updates the root `index.md` (replaces or appends
+the row for this slug) and appends a parseable log entry to `log.md`.
+Do not write index/log manually — and do not pass `index` or `log` as a
+slug; paper7 rejects those as reserved.
 
 ## Output to the user
 
@@ -181,7 +178,7 @@ Print the synthesized markdown answer to the conversation. Mention briefly:
   terms, different domain). If still empty after 2 attempts, tell the user
   honestly — paper7 cannot find supporting literature.
 - **`paper7 get` fails with HTTP error:** retry once. If still fails, drop
-  that paper from the top-K and continue with others.
+  that paper from the top picks and continue with others.
 - **DOI without abstract:** Crossref doesn't always have abstracts; the
   paper7 command will warn. Pick a different paper or use the title +
   metadata only.
@@ -196,6 +193,6 @@ Print the synthesized markdown answer to the conversation. Mention briefly:
 | Reading 20+ papers | Token bloat. 5-10 is the right range. |
 | Skipping step 0 (KB check) | Wastes search calls and discards prior synthesis. |
 | Skipping step 8 (file-back) | Loses the synthesis. Future questions start over. |
-| Using `--abstract-only` for top-K | Sources stay empty, corpus never compounds. Default to `kb ingest`. |
+| Using `--abstract-only` for top picks | Sources stay empty, corpus never compounds. Default to `kb ingest`. |
 | Slug = literal question | `pitohui-toxicity` not `what-makes-the-pitohui-bird-toxic`. |
 | Inventing a year/author when metadata is missing | Use the real metadata or omit the field. |
