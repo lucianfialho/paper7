@@ -1352,13 +1352,20 @@ _cite_load_doi_meta() {
     err "failed to fetch Crossref metadata for ${d}"
     return 1
   fi
-  title=$(jq -r '.message.title[0] // ""' < "$tmp_response")
-  authors_raw=$(jq -r '[.message.author[]? | (.given // "") + " " + (.family // "") | gsub("^ +| +$"; "")] | join("|")' < "$tmp_response")
-  year=$(jq -r '(.message.issued."date-parts"[0][0] // .message.created."date-parts"[0][0] // "") | tostring' < "$tmp_response")
-  journal=$(jq -r '(.message["container-title"][0] // .message.publisher // "")' < "$tmp_response")
-  volume=$(jq -r '(.message.volume // "")' < "$tmp_response")
-  issue=$(jq -r '(.message.issue // "")' < "$tmp_response")
-  pages=$(jq -r '(.message.page // "")' < "$tmp_response")
+  # Single jq call extracting all fields tab-separated; cuts 7 process spawns to 1.
+  local fields
+  fields=$(jq -r '
+    [
+      (.message.title[0] // ""),
+      ([.message.author[]? | (.given // "") + " " + (.family // "") | gsub("^ +| +$"; "")] | join("|")),
+      ((.message.issued."date-parts"[0][0] // .message.created."date-parts"[0][0] // "") | tostring),
+      (.message["container-title"][0] // .message.publisher // ""),
+      (.message.volume // ""),
+      (.message.issue // ""),
+      (.message.page // "")
+    ] | @tsv
+  ' < "$tmp_response")
+  IFS=$'\t' read -r title authors_raw year journal volume issue pages <<<"$fields"
   doi="$d"
   rm -f "$tmp_response"
 }
@@ -1376,14 +1383,22 @@ _cite_load_pmid_meta() {
     err "failed to fetch PubMed metadata for pmid:${p}"
     return 1
   fi
-  title=$(jq -r ".result[\"${p}\"].title // \"\"" < "$tmp_response")
-  authors_raw=$(jq -r "[.result[\"${p}\"].authors[]? | .name] | join(\"|\")" < "$tmp_response")
-  year=$(jq -r ".result[\"${p}\"].pubdate // \"\" | .[0:4]" < "$tmp_response")
-  journal=$(jq -r ".result[\"${p}\"].fulljournalname // .result[\"${p}\"].source // \"\"" < "$tmp_response")
-  volume=$(jq -r ".result[\"${p}\"].volume // \"\"" < "$tmp_response")
-  issue=$(jq -r ".result[\"${p}\"].issue // \"\"" < "$tmp_response")
-  pages=$(jq -r ".result[\"${p}\"].pages // \"\"" < "$tmp_response")
-  doi=$(jq -r "([.result[\"${p}\"].articleids[]? | select(.idtype==\"doi\") | .value] | first) // \"\"" < "$tmp_response")
+  # Single jq call extracting all fields tab-separated; cuts 8 process spawns to 1.
+  local fields
+  fields=$(jq -r --arg p "$p" '
+    .result[$p] as $r |
+    [
+      ($r.title // ""),
+      ([$r.authors[]? | .name] | join("|")),
+      (($r.pubdate // "") | .[0:4]),
+      ($r.fulljournalname // $r.source // ""),
+      ($r.volume // ""),
+      ($r.issue // ""),
+      ($r.pages // ""),
+      (([$r.articleids[]? | select(.idtype=="doi") | .value] | first) // "")
+    ] | @tsv
+  ' < "$tmp_response")
+  IFS=$'\t' read -r title authors_raw year journal volume issue pages doi <<<"$fields"
   pmid="$p"
   rm -f "$tmp_response"
 }
