@@ -481,6 +481,7 @@ cmd_get() {
   local no_refs=false
   local no_tldr=false
   local detailed=false
+  local abstract_only=false
   local range_spec=""
   local input=""
 
@@ -490,6 +491,7 @@ cmd_get() {
       --no-refs)  no_refs=true; shift ;;
       --no-tldr)  no_tldr=true; shift ;;
       --detailed) detailed=true; shift ;;
+      --abstract-only) abstract_only=true; shift ;;
       --range)
         if [ $# -lt 2 ]; then
           err "missing value for --range"
@@ -500,18 +502,19 @@ cmd_get() {
         ;;
       --help|-h)
         cat <<EOF
-Usage: paper7 get <id> [--no-refs] [--no-cache] [--no-tldr] [--detailed] [--range START:END]
+Usage: paper7 get <id> [--no-refs] [--no-cache] [--no-tldr] [--detailed] [--range START:END] [--abstract-only]
 
 IDs:
   arXiv   — e.g. 2401.04088 or https://arxiv.org/abs/2401.04088
   PubMed  — e.g. pmid:38903003
 
 Options:
-  --no-refs     Strip References section (arXiv only; no-op for PubMed)
-  --no-cache    Force re-download, bypassing local cache
-  --no-tldr     Skip the Semantic Scholar TLDR enrichment lookup
-  --detailed    Print the full paper instead of the compact indexed header
-  --range       Detailed-only line slice, format: START:END
+  --no-refs        Strip References section (arXiv only; no-op for PubMed)
+  --no-cache       Force re-download, bypassing local cache
+  --no-tldr        Skip the Semantic Scholar TLDR enrichment lookup
+  --detailed       Print the full paper instead of the compact indexed header
+  --range          Detailed-only line slice, format: START:END
+  --abstract-only  Print only title + metadata + abstract (skips full text fetch)
 EOF
         return 0
         ;;
@@ -538,7 +541,7 @@ EOF
     if [ "$no_refs" = true ]; then
       info "note: --no-refs has no effect for DOI fetches"
     fi
-    cmd_get_doi "$doi" "$no_cache" "$no_tldr" "$detailed" "$range_spec"
+    cmd_get_doi "$doi" "$no_cache" "$no_tldr" "$detailed" "$range_spec" "$abstract_only"
     return $?
   fi
 
@@ -548,13 +551,13 @@ EOF
     if [ "$no_refs" = true ]; then
       info "note: --no-refs has no effect for PubMed abstracts"
     fi
-    cmd_get_pubmed "$pmid" "$no_cache" "$no_tldr" "$detailed" "$range_spec"
+    cmd_get_pubmed "$pmid" "$no_cache" "$no_tldr" "$detailed" "$range_spec" "$abstract_only"
     return $?
   fi
 
   local id
   id=$(parse_arxiv_id "$input") || return 1
-  cmd_get_arxiv "$id" "$no_cache" "$no_refs" "$no_tldr" "$detailed" "$range_spec"
+  cmd_get_arxiv "$id" "$no_cache" "$no_refs" "$no_tldr" "$detailed" "$range_spec" "$abstract_only"
 }
 
 cmd_get_arxiv() {
@@ -564,13 +567,14 @@ cmd_get_arxiv() {
   local no_tldr="${4:-false}"
   local detailed="${5:-false}"
   local range_spec="${6:-}"
+  local abstract_only="${7:-false}"
 
   local dir="${CACHE_DIR}/${id}"
   local cache_file="${dir}/paper.md"
   local meta_file="${dir}/meta.json"
 
-  # Check cache
-  if [ "$no_cache" = false ] && [ -f "$cache_file" ]; then
+  # Check cache (skipped for --abstract-only — full cache may contain body sections)
+  if [ "$abstract_only" = false ] && [ "$no_cache" = false ] && [ -f "$cache_file" ]; then
     info "cached: $cache_file"
     emit_paper_output "$cache_file" "$dir" "$id" "$no_refs" "$detailed" "$range_spec"
     return 0
@@ -597,7 +601,25 @@ cmd_get_arxiv() {
   local abstract
   abstract=$(tr '\n' ' ' < "$api_file" | sed -n 's:.*<summary>\(.*\)</summary>.*:\1:p' | tail -1 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' || true)
 
+  local published_year
+  published_year=$(sed -n 's|.*<published>\([0-9]\{4\}\).*|\1|p' "$api_file" 2>/dev/null | head -1 || true)
+  [ -z "$published_year" ] && published_year="Unknown"
+
   rm -f "$api_file"
+
+  # Short-circuit for --abstract-only: emit lightweight header and return,
+  # skipping the ~3MB ar5iv HTML fetch and conversion.
+  if [ "$abstract_only" = true ]; then
+    cat <<EOF
+# ${title}
+**arXiv:** ${id}  **DOI:** 10.48550/arXiv.${id}  **Year:** ${published_year}  **Venue:** arXiv preprint
+
+## Abstract
+
+${abstract}
+EOF
+    return 0
+  fi
 
   # Fetch full text from ar5iv
   info "fetching ${AR5IV_URL}/${id} ..."
@@ -715,13 +737,14 @@ cmd_get_pubmed() {
   local no_tldr="${3:-false}"
   local detailed="${4:-false}"
   local range_spec="${5:-}"
+  local abstract_only="${6:-false}"
 
   local dir="${CACHE_DIR}/pmid-${pmid}"
   local cache_file="${dir}/paper.md"
   local meta_file="${dir}/meta.json"
 
-  # Check cache
-  if [ "$no_cache" = false ] && [ -f "$cache_file" ]; then
+  # Check cache (skipped for --abstract-only)
+  if [ "$abstract_only" = false ] && [ "$no_cache" = false ] && [ -f "$cache_file" ]; then
     info "cached: $cache_file"
     emit_paper_output "$cache_file" "$dir" "pmid:${pmid}" false "$detailed" "$range_spec"
     return 0
@@ -855,6 +878,22 @@ cmd_get_pubmed() {
   ')
   [ -z "$abstract" ] && abstract="(no abstract available)"
 
+  # Short-circuit for --abstract-only: emit lightweight header and return.
+  # No body fetch happens for PubMed; this still skips cache write.
+  if [ "$abstract_only" = true ]; then
+    rm -f "$xml_file"
+    rmdir "$dir" 2>/dev/null || true
+    cat <<EOF
+# ${title}
+**PMID:** ${pmid}  **Year:** ${pubyear:-Unknown}  **Venue:** ${journal:-Unknown}
+
+## Abstract
+
+${abstract}
+EOF
+    return 0
+  fi
+
   # --- Write Markdown ---
   # --- TLDR via Semantic Scholar (best-effort) ---
   local tldr=""
@@ -919,13 +958,14 @@ cmd_get_doi() {
   local no_tldr="${3:-false}"
   local detailed="${4:-false}"
   local range_spec="${5:-}"
+  local abstract_only="${6:-false}"
 
   # Auto-redirect arXiv DOIs (10.48550/arXiv.YYMM.NNNNN) → cmd_get_arxiv,
   # so they share the existing arXiv cache and don't duplicate.
   if [[ "$doi" =~ ^10\.48550/arXiv\.([0-9]{4}\.[0-9]{4,5})$ ]]; then
     local arxiv_id="${BASH_REMATCH[1]}"
     info "DOI is arXiv mirror; redirecting to arXiv path for $arxiv_id"
-    cmd_get_arxiv "$arxiv_id" "$no_cache" "false" "$no_tldr" "$detailed" "$range_spec"
+    cmd_get_arxiv "$arxiv_id" "$no_cache" "false" "$no_tldr" "$detailed" "$range_spec" "$abstract_only"
     return $?
   fi
 
@@ -937,8 +977,8 @@ cmd_get_doi() {
   local cache_file="${dir}/paper.md"
   local meta_file="${dir}/meta.json"
 
-  # Cache hit
-  if [ "$no_cache" = false ] && [ -f "$cache_file" ]; then
+  # Cache hit (skipped for --abstract-only)
+  if [ "$abstract_only" = false ] && [ "$no_cache" = false ] && [ -f "$cache_file" ]; then
     info "cached: $cache_file"
     emit_paper_output "$cache_file" "$dir" "doi:${doi}" false "$detailed" "$range_spec"
     return 0
@@ -1027,6 +1067,21 @@ cmd_get_doi() {
   fi
   if [ -z "$abstract" ]; then
     abstract="(no abstract available; full text at ${full_text_url})"
+  fi
+
+  # Short-circuit for --abstract-only: emit lightweight header and return,
+  # skipping cache write and TLDR enrichment.
+  if [ "$abstract_only" = true ]; then
+    rmdir "$dir" 2>/dev/null || true
+    cat <<EOF
+# ${title}
+**DOI:** ${doi}  **Year:** ${year}  **Venue:** ${source}
+
+## Abstract
+
+${abstract}
+EOF
+    return 0
   fi
 
   # TLDR via Semantic Scholar (best-effort)
