@@ -284,14 +284,11 @@ generate_index_rows() {
     END {
       pop_to(1, NR)
       for (i = 1; i <= n; i++) {
-        t = p_title[i]; gsub(/\|/, "\\|", t)
-        if (p_lvl[i] == 2) {
-          prefix = "| "
-        } else {
-          prefix = "|"
-          for (j = 2; j < p_lvl[i]; j++) prefix = prefix "     "
-        }
-        printf "%s%s | %d-%d |\n", prefix, t, p_start[i], p_end[i]
+        t = p_title[i]
+        gsub(/\[/, "\\[", t); gsub(/\]/, "\\]", t)
+        indent = ""
+        for (j = 2; j < p_lvl[i]; j++) indent = indent "  "
+        printf "%s- [%s](#L%d-L%d)\n", indent, t, p_start[i], p_end[i]
       }
     }
   ' "$1"
@@ -365,13 +362,12 @@ render_compact_output() {
   fi
 
   echo ""
-  echo "**Index:**"
-  echo "| Section | Lines |"
-  echo "|---------|-------|"
-  printf '%s\n' "$index_rows"
+  echo "## Sections"
   echo ""
-  echo "> Fetch lines: \`paper7 get ${canonical_id} --detailed --range START:END\`"
-  echo "> Full paper: \`paper7 get ${canonical_id} --detailed\`"
+  echo "> Fetch a range: \`paper7 get ${canonical_id} --detailed --range START:END\`  "
+  echo "> Full paper:    \`paper7 get ${canonical_id} --detailed\`"
+  echo ""
+  printf '%s\n' "$index_rows"
 }
 
 emit_paper_output() {
