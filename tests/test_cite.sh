@@ -31,6 +31,22 @@ else
   pass "BibTeX from arXiv ID"
 fi
 
+# --- Test 2: APA from DOI ---
+echo "Test 2: paper7 cite doi:10.1126/science.1439786 --format apa"
+out=$("$PAPER7" cite doi:10.1126/science.1439786 --format apa 2>&1)
+code=$?
+if [ "$code" -ne 0 ]; then
+  fail "exit code" "expected 0, got $code; output:\n$out"
+elif ! echo "$out" | grep -qi "dumbacher"; then
+  fail "author" "expected 'Dumbacher' in APA output"
+elif ! echo "$out" | grep -q "(1992)"; then
+  fail "year" "expected '(1992)'"
+elif ! echo "$out" | grep -q "https://doi.org/10.1126/science.1439786"; then
+  fail "DOI url" "expected 'https://doi.org/...'"
+else
+  pass "APA from DOI"
+fi
+
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"
 exit "$FAIL"

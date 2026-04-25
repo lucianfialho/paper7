@@ -1407,10 +1407,50 @@ _cite_render_bibtex() {
   printf '}\n'
 }
 
-# --- APA renderer (stub; implemented in next task) ---
+# --- APA renderer (APA 7) ---
 _cite_render_apa() {
-  err "APA format not yet implemented"
-  return 1
+  # APA 7: Authors. (Year). Title. *Journal*, Volume(Issue), Pages. https://doi.org/...
+  # Authors formatted as "Last, F. M., Last2, F. M., & Last3, F. M."
+  local authors_apa
+  authors_apa=$(printf '%s' "$authors_raw" | awk -F'|' '
+    function format_author(name,    parts, last, initials, i, n) {
+      n = split(name, parts, " ")
+      if (n < 2) return name
+      last = parts[n]
+      initials = ""
+      for (i = 1; i < n; i++) {
+        if (length(parts[i]) > 0) initials = initials substr(parts[i], 1, 1) ". "
+      }
+      sub(/ $/, "", initials)
+      return last ", " initials
+    }
+    {
+      out = ""
+      for (i = 1; i <= NF; i++) {
+        a = format_author($i)
+        if (i == 1)               out = a
+        else if (i == NF && NF>1) out = out ", & " a
+        else                       out = out ", " a
+      }
+      print out
+    }')
+
+  local out_line
+  out_line="${authors_apa} (${year}). ${title}."
+  if [ -n "$journal" ]; then
+    out_line="${out_line} *${journal}*"
+    if [ -n "$volume" ]; then
+      out_line="${out_line}, ${volume}"
+      [ -n "$issue" ] && out_line="${out_line}(${issue})"
+    fi
+    [ -n "$pages" ] && out_line="${out_line}, ${pages}"
+    out_line="${out_line}."
+  fi
+  if [ -n "$doi" ]; then
+    out_line="${out_line} https://doi.org/${doi}"
+  fi
+
+  printf '%s\n' "$out_line"
 }
 
 # --- ABNT renderer (stub; implemented in next task) ---
