@@ -61,6 +61,30 @@ else
   pass "ABNT from PMID"
 fi
 
+# --- Test 4: Unknown format errors ---
+echo "Test 4: paper7 cite 1706.03762 --format yaml"
+out=$("$PAPER7" cite 1706.03762 --format yaml 2>&1)
+code=$?
+if [ "$code" -eq 0 ]; then
+  fail "exit code" "expected non-zero for unknown format, got 0"
+elif ! echo "$out" | grep -qi "unknown format"; then
+  fail "error message" "expected 'unknown format' in stderr"
+else
+  pass "unknown format rejected"
+fi
+
+# --- Test 5: Missing ID errors ---
+echo "Test 5: paper7 cite --format bibtex (no ID)"
+out=$("$PAPER7" cite --format bibtex 2>&1)
+code=$?
+if [ "$code" -eq 0 ]; then
+  fail "exit code" "expected non-zero for missing ID"
+elif ! echo "$out" | grep -qi "missing"; then
+  fail "error message" "expected 'missing' in stderr"
+else
+  pass "missing ID rejected"
+fi
+
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"
 exit "$FAIL"
