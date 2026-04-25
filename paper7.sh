@@ -2221,8 +2221,10 @@ cmd_kb() {
       info "fetching $paper_id → $out_file"
       bash "$0" get "$paper_id" --detailed --no-refs "$@" > "$out_file"
 
+      # Find first H1 line, skipping any prompt-injection boundary marker.
       local title
-      title=$(head -1 "$out_file" | sed 's/^# //')
+      title=$(grep -m1 '^# ' "$out_file" | sed 's/^# //')
+      [ -z "$title" ] && title="$paper_id"
 
       printf '## [%s] ingest | %s\n\nSource: %s  \nFile: %s\n\n' \
         "$(date +%Y-%m-%d)" "$title" "$paper_id" "$out_file" >> "$WIKI_LOG"
@@ -2311,13 +2313,13 @@ cmd_kb() {
       echo -e "${BOLD}Pages${RESET} (${WIKI_PAGES})"
       for f in "${WIKI_PAGES}"/*.md; do
         [ -f "$f" ] || continue
-        printf "  %s — %s\n" "$(basename "$f" .md)" "$(head -1 "$f" | sed 's/^# //')"
+        printf "  %s — %s\n" "$(basename "$f" .md)" "$(grep -m1 '^# ' "$f" | sed 's/^# //')"
       done
       echo ""
       echo -e "${BOLD}Sources${RESET} (${WIKI_SOURCES})"
       for f in "${WIKI_SOURCES}"/*.md; do
         [ -f "$f" ] || continue
-        printf "  %s — %s\n" "$(basename "$f" .md)" "$(head -1 "$f" | sed 's/^# //')"
+        printf "  %s — %s\n" "$(basename "$f" .md)" "$(grep -m1 '^# ' "$f" | sed 's/^# //')"
       done
       ;;
 
