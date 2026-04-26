@@ -12,7 +12,7 @@
   ],
   "scripts": {
     "build": "tsc",
-    "sandcastle": "tsx .sandcastle/main.mts",
+    "sandcastle": "bun .sandcastle/main.ts --local",
     "test": "vitest run"
   },
   "dependencies": {
