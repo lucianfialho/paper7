@@ -7,6 +7,7 @@ Conventions throughout:
 - All HTTP calls send `tool=paper7` as a query parameter (NCBI + Semantic Scholar courtesy).
 - Network failures degrade per-source: search/fetch exit non-zero with a stderr message; metadata enrichment (e.g. TLDR) is best-effort and silent.
 - IDs visible to the user are always **canonical paper7 form**: `YYMM.NNNNN` for arXiv, `pmid:NNNN` for PubMed, `doi:...` or `s2:<paperId>` for Semantic Scholar.
+- The npm CLI parses responses internally in Node; normal operation does not shell out to external tools.
 
 ## Upstream assumptions and network behavior
 
@@ -31,7 +32,7 @@ Full-text source for physics, computer science, machine learning, math, and quan
 | `https://ar5iv.labs.arxiv.org/html/<id>` | `paper7 get` (full body) | HTML rendering of the arXiv source — paper7 strips tags and emits clean Markdown. Skips PDF parsing entirely. |
 
 ### Response format
-XML (Atom feed). Parsed with `awk` over the `<entry>` blocks.
+XML (Atom feed). Parsed internally by the Node CLI.
 
 ### Rate limits
 arXiv asks for ~3-second delay between bursts; paper7 issues one request per user-issued command, well under the threshold. No formal cap.
@@ -64,7 +65,7 @@ Biomedical, clinical, and pharmacological literature. Activated via `paper7 sear
 | `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=<id>&rettype=abstract&retmode=xml` | `paper7 get pmid:NNNN` | Returns full PubmedArticle XML — paper7 extracts title, authors, journal, publication date, DOI, and abstract. |
 
 ### Response format
-XML across all three endpoints. Parsed with `grep`/`sed`/`awk` (no `xmllint` dependency).
+XML across all three endpoints. Parsed internally by the Node CLI.
 
 ### Rate limits
 - Without API key: 3 requests/second/IP
@@ -77,7 +78,7 @@ Optional. paper7 does not currently surface API key support; could be added via 
 ### Known gaps
 - **Abstracts only.** Full text lives on PMC (PubMed Central) and is a separate pipeline not yet implemented. `paper7 get pmid:NNNN` returns metadata + abstract; users wanting full text must fetch from PMC or the publisher.
 - `--no-refs` flag is a no-op for PubMed papers (abstracts have no References section).
-- `paper7 vault` rejects PMIDs today — vault export for PubMed papers is deferred to a future issue once PMID-specific frontmatter is designed.
+- `paper7 vault` exports cached PubMed abstracts with PMID-safe filenames and shared paper frontmatter.
 - PubDate normalization: prefers `<Year><Month><Day>` form, falls back to `<MedlineDate>` raw string when only a season/range is published (e.g. `"2025 Jul-Aug"`).
 
 ### Upstream docs
@@ -115,7 +116,7 @@ Optional. Currently no env var hookup; planned as a follow-up issue if rate limi
 - **Best-effort enrichment.** TLDR coverage is ~80% of papers; `paper7 get` does not flag when S2 has no TLDR vs when S2 was unreachable — both render the same (no `**TLDR:**` line). Users wanting determinism can pass `--no-tldr`.
 - TLDR is cached in `meta.json` and `paper.md` only on **fresh fetches** (cache miss). Already-cached papers from before this feature won't get a TLDR until the user runs `paper7 get <id> --no-cache`. There is no lazy backfill.
 - `paper7 cites <id>` (reverse direction — papers citing this one) is not yet implemented; it is a planned follow-up.
-- `paper7 vault` does not yet consume S2 refs — it still extracts wikilinks from the body via regex. Refactoring the vault export to use S2 refs is a separate planned issue.
+- `paper7 vault` does not yet consume S2 refs — it still extracts wikilinks from the body via regex. Vault exports cached arXiv, PubMed, and DOI papers; refactoring the export to use S2 refs is a separate planned issue.
 - Search via S2 (`/paper/search`) is not implemented; arXiv and PubMed search cover the use cases today.
 
 ### Upstream docs
@@ -150,6 +151,7 @@ None required. No API key. A real maintainer-owned polite-pool email is required
 ### Known gaps
 - Abstracts come wrapped in JATS XML (`<jats:p>`, `<jats:italic>`, etc.). paper7 strips the tags but the formatting can be uneven across publishers.
 - Crossref doesn't host full text — `paper7 get doi:` always returns metadata + abstract only. The Markdown header includes a `**Full text:**` link to the publisher/preprint server.
+- `paper7 vault` exports cached DOI records with DOI-safe filenames and shared paper frontmatter.
 - Some journal DOIs have no abstract in Crossref (publisher didn't deposit it). paper7 emits a placeholder `(no abstract available; full text at <URL>)`.
 - DOI URL form (`https://doi.org/...`) is not yet accepted as input — only the bare `doi:10.XXXX/...` prefix.
 
@@ -198,9 +200,9 @@ N/A.
 
 Use this template for the next source (bioRxiv, OpenAlex, etc.):
 
-1. Add a constant to `paper7.sh` near the existing API URL block.
-2. Add a `parse_<source>_id` and `is_<source>_input` helper if the source uses a new ID shape.
-3. Add `cmd_<existing>_<source>` functions (one per dispatched command — search/get/refs as applicable). Keep arXiv and PubMed paths byte-identical for regression safety.
+1. Add a source module under `src/` for endpoint access and response decoding.
+2. Extend the typed CLI/parser boundary if the source uses a new command, flag, or ID shape.
+3. Wire the source into the relevant command path — search/get/refs as applicable. Keep existing arXiv, PubMed, and DOI behavior byte-identical for regression safety.
 4. Add a section to this file with the same headings (Purpose, Endpoints used, Response format, Rate limits, Auth, Known gaps, Upstream docs).
 5. Add a `tests/test_<source>.sh` smoke suite. Detect rate-limit (429) and skip rather than fail.
 6. Update `README.md` Usage and CLI reference blocks; update `llms.txt` if the source affects LLM-agent behavior.

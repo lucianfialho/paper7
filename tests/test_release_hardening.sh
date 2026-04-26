@@ -79,6 +79,27 @@ else
   fail "package publish surface" "expected dist-only package, Effect runtime deps only, and no install/postinstall"
 fi
 
+echo "Test 6: Node CLI docs parity"
+runtime_section=$(awk '/^## Runtime and Package Policy/,/^## Why not just use PDF\?/' "$README")
+sources_check=$(node --input-type=module -e '
+  import fs from "node:fs"
+  const sources = fs.readFileSync(process.argv[1], "utf8")
+  const responseSections = [...sources.matchAll(/### Response format\n([\s\S]*?)(?=\n### )/g)].map((match) => match[1])
+  const bashParserClaims = responseSections.some((section) => /`(?:awk|grep|sed)`|\b(?:awk|grep|sed)\b/.test(section))
+  const paper7ShInstructions = /paper7\.sh/.test(sources)
+  const vaultNotesCurrent = /Vault exports cached arXiv, PubMed, and DOI papers/.test(sources)
+  process.stdout.write(!bashParserClaims && !paper7ShInstructions && vaultNotesCurrent ? "ok" : "bad")
+' "$SOURCES")
+if [ "$sources_check" != "ok" ]; then
+  fail "source docs match Node CLI" "docs/sources.md must not describe awk/grep/sed parsing or paper7.sh edits, and must document current vault PubMed/DOI export support"
+elif echo "$runtime_section" | grep -Eq '`curl`|`sed`|`grep`|`awk`|xmllint|external HTML/XML parsers'; then
+  fail "runtime policy avoids external tools" "README runtime policy must state normal npm CLI operation does not shell out to external tools"
+elif grep -q '| Dependencies | Vision API or poppler | `curl` |' "$README"; then
+  fail "README runtime dependency" "README must not list curl as a paper7 runtime dependency"
+else
+  pass "Node CLI docs parity claims are covered"
+fi
+
 TOTAL=$((PASS + FAIL))
 echo ""
 echo "────────────────────────────────────────"

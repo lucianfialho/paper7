@@ -150,7 +150,7 @@ paper7 skips PDF parsing entirely. For arXiv, ar5iv provides the same content as
 
 ## Runtime and Package Policy
 
-The npm package ships prebuilt `dist/` JavaScript and has no install-time build, `install`, or `postinstall` script. Runtime dependencies are intentionally limited to `effect` and `@effect/platform-node`; normal operation does not depend on shelling out to `curl`, `sed`, `grep`, `awk`, `xmllint`, or external HTML/XML parsers. HTML/XML handling is covered by deterministic fixture tests in `tests/fixtures/`.
+The npm package ships prebuilt `dist/` JavaScript and has no install-time build, `install`, or `postinstall` script. Runtime dependencies are intentionally limited to `effect` and `@effect/platform-node`; normal npm CLI operation does not shell out to external tools. HTML/XML handling is covered by deterministic fixture tests in `tests/fixtures/`.
 
 ## Why not just use PDF?
 
@@ -163,7 +163,7 @@ The npm package ships prebuilt `dist/` JavaScript and has no install-time build,
 | Math notation | Garbled or requires Vision API | Cleaned |
 | Metadata | Mixed into body text | Structured header |
 | Local cache | No | Built-in knowledge base |
-| Dependencies | Vision API or poppler | `curl` |
+| Dependencies | Vision API or poppler | Node.js + npm package |
 
 ## Research
 
