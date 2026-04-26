@@ -12,6 +12,7 @@
   ],
   "scripts": {
     "build": "tsc",
+    "sandcastle": "tsx .sandcastle/main.mts",
     "test": "bash tests/test_cli_skeleton.sh"
   },
   "dependencies": {
@@ -19,6 +20,8 @@
     "@effect/platform-node": "4.0.0-beta.51"
   },
   "devDependencies": {
+    "@ai-hero/sandcastle": "^0.5.4",
+    "tsx": "^4.21.0",
     "typescript": "^5.8.0"
   },
   "engines": {
