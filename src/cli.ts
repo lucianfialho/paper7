@@ -13,6 +13,7 @@ import { PubmedClient, PubmedLive, type PubmedError, type PubmedSearchResult } f
 import { RepositoryDiscoveryClient, RepositoryDiscoveryLive, type RepositoryDiscoveryError, type RepositoryDiscoveryResult } from "./repo.js"
 import { getReferences, type RefsError } from "./refs.js"
 import { SemanticScholarClient, SemanticScholarLive, type SemanticScholarError } from "./semanticScholar.js"
+import { exportAllPapersToVault, exportPaperToVault, initVault, type VaultError, type VaultExportAllResult, type VaultExportResult, type VaultInitResult } from "./vault.js"
 
 export const VERSION = "0.6.0-beta.0"
 
@@ -117,6 +118,27 @@ const runCommand = (command: CliCommand): Effect.Effect<void, Error, ArxivClient
         Effect.flatMap((result) => Console.log(renderCacheClear(result))),
         Effect.catch((error) =>
           Console.error(formatCacheError(error)).pipe(Effect.andThen(Effect.fail(new Error(formatCacheError(error)))))
+        )
+      )
+    case "vault-init":
+      return initVault(command.path).pipe(
+        Effect.flatMap((result) => Console.log(renderVaultInit(result))),
+        Effect.catch((error) =>
+          Console.error(formatVaultError(error)).pipe(Effect.andThen(Effect.fail(new Error(formatVaultError(error)))))
+        )
+      )
+    case "vault-export":
+      return exportPaperToVault(command.id).pipe(
+        Effect.flatMap((result) => Console.log(renderVaultExport(result))),
+        Effect.catch((error) =>
+          Console.error(formatVaultError(error)).pipe(Effect.andThen(Effect.fail(new Error(formatVaultError(error)))))
+        )
+      )
+    case "vault-all":
+      return exportAllPapersToVault().pipe(
+        Effect.flatMap((result) => Console.log(renderVaultExportAll(result))),
+        Effect.catch((error) =>
+          Console.error(formatVaultError(error)).pipe(Effect.andThen(Effect.fail(new Error(formatVaultError(error)))))
         )
       )
     default:
@@ -240,6 +262,12 @@ export const renderCacheClear = (result: CacheClearResult): string => {
   }
 }
 
+export const renderVaultInit = (result: VaultInitResult): string => `Configured vault: ${result.path}`
+
+export const renderVaultExport = (result: VaultExportResult): string => `Exported ${result.id} to ${result.path}`
+
+export const renderVaultExportAll = (result: VaultExportAllResult): string => `Exported ${result.count} papers to ${result.path}`
+
 const truncateAuthors = (authors: string): string => {
   if (authors.length <= 60) return authors
   return `${authors.slice(0, 57)}...`
@@ -359,6 +387,18 @@ const formatCacheError = (error: CacheError): string => {
   switch (error._tag) {
     case "CacheFsError":
       return `error: cache failure: ${error.message}`
+  }
+}
+
+const formatVaultError = (error: VaultError): string => {
+  switch (error._tag) {
+    case "VaultConfigMissing":
+    case "VaultInvalidPath":
+    case "VaultCacheMissing":
+    case "VaultCacheMalformed":
+      return `error: vault export failed: ${error.message}`
+    case "VaultFsError":
+      return `error: vault export failed: ${error.message}`
   }
 }
 
