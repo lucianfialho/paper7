@@ -94,8 +94,8 @@ export const parsePaperIdentifier = (input: string): PaperIdentifier | undefined
 export const parseCliArgs = (args: ReadonlyArray<string>): ParseResult => {
   const first = args[0]
   if (first === undefined) return command({ tag: "help" })
-  if (first === "help" || first === "--help" || first === "-h") return command({ tag: "help" })
-  if (first === "--version" || first === "-v") return command({ tag: "version" })
+  if (first === "help" || first === "--help" || first === "-h") return noArgs(args.slice(1), { tag: "help" })
+  if (first === "--version" || first === "-v") return noArgs(args.slice(1), { tag: "version" })
 
   switch (first) {
     case "search":

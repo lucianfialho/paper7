@@ -109,6 +109,11 @@ check_error "vault init missing path rejected" vault init
 check_error "vault all extra arg rejected" vault all extra
 check_error "repo extra arg rejected" repo 2401.04088 extra
 check_error "list extra arg rejected" list extra
+check_error "help extra arg rejected" help extra
+check_error "--help extra arg rejected" --help extra
+check_error "-h extra arg rejected" -h extra
+check_error "--version extra arg rejected" --version extra
+check_error "-v extra arg rejected" -v extra
 
 output=$($PAPER7 get nope 2>&1) && code=0 || code=$?
 if [[ $code -ne 0 && "$output" == *"error: invalid paper id: nope"* ]]; then
