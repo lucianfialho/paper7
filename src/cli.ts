@@ -10,6 +10,7 @@ import type { CliCommand } from "./parser.js"
 import { parseCliArgs } from "./parser.js"
 import { PubmedClient, PubmedLive, type PubmedError, type PubmedSearchResult } from "./pubmed.js"
 import { getReferences, type RefsError } from "./refs.js"
+import { SemanticScholarClient, SemanticScholarLive, type SemanticScholarError } from "./semanticScholar.js"
 
 export const VERSION = "0.6.0-beta.0"
 
@@ -60,7 +61,7 @@ Examples:
   paper7 vault all
 `)
 
-const runCommand = (command: CliCommand): Effect.Effect<void, Error, ArxivClient | Ar5ivClient | PubmedClient | CrossrefClient> => {
+const runCommand = (command: CliCommand): Effect.Effect<void, Error, ArxivClient | Ar5ivClient | PubmedClient | CrossrefClient | SemanticScholarClient> => {
   switch (command.tag) {
     case "help":
       return showHelp
@@ -244,9 +245,26 @@ const formatCrossrefError = (error: CrossrefError): string => {
 
 const formatRefsError = (error: RefsError): string => {
   switch (error._tag) {
-    case "RefsHttpError":
+    case "RefsSemanticScholarError":
+      return formatSemanticScholarError(error.error)
+  }
+}
+
+const formatSemanticScholarError = (error: SemanticScholarError): string => {
+  switch (error._tag) {
+    case "SemanticScholarHttpError":
       return `error: Semantic Scholar failure: ${error.message}`
-    case "RefsDecodeError":
+    case "SemanticScholarNotFoundError":
+      return `error: ${error.message}`
+    case "SemanticScholarRateLimitError":
+      return error.retryAfter === undefined
+        ? `error: Semantic Scholar rate limit exceeded`
+        : `error: Semantic Scholar rate limit exceeded; retry after ${error.retryAfter}`
+    case "SemanticScholarTransientError":
+      return `error: Semantic Scholar upstream failure: ${error.message}`
+    case "SemanticScholarTimeoutError":
+      return `error: Semantic Scholar upstream failure: ${error.message}`
+    case "SemanticScholarDecodeError":
       return `error: Semantic Scholar decode failure: ${error.message}`
   }
 }
@@ -257,6 +275,6 @@ const program = parsed.ok
   ? runCommand(parsed.command)
   : Console.error(`error: ${parsed.error}`).pipe(Effect.andThen(Effect.fail(new Error(parsed.error))))
 
-NodeRuntime.runMain(program.pipe(Effect.provide(ArxivLive), Effect.provide(Ar5ivLive), Effect.provide(PubmedLive), Effect.provide(CrossrefLive), Effect.provide(NodeServices.layer)), {
+NodeRuntime.runMain(program.pipe(Effect.provide(ArxivLive), Effect.provide(Ar5ivLive), Effect.provide(PubmedLive), Effect.provide(CrossrefLive), Effect.provide(SemanticScholarLive), Effect.provide(NodeServices.layer)), {
   disableErrorReporting: true,
 })
