@@ -33,6 +33,10 @@ type CacheMeta = {
 }
 
 export const initVault = (inputPath: string): Effect.Effect<VaultInitResult, VaultError> => {
+  if (inputPath.trim() === "") {
+    return Effect.fail({ _tag: "VaultInvalidPath", message: "invalid vault path: <empty>", path: inputPath })
+  }
+
   const vaultPath = normalizePath(inputPath)
   return validateVaultPath(vaultPath).pipe(
     Effect.flatMap(() => writeVaultConfig(vaultPath)),

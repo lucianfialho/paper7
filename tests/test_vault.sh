@@ -104,6 +104,15 @@ else
 fi
 rm -rf "$invalid_home"
 
+empty_home=$(tmp_home)
+empty=$(HOME="$empty_home" $PAPER7 vault init "" 2>&1 || true)
+if [[ "$empty" == "error: vault export failed: invalid vault path: <empty>" && ! -f "$empty_home/.paper7/config" ]]; then
+  pass "vault rejects empty init path"
+else
+  fail "empty init path mismatch: $empty"
+fi
+rm -rf "$empty_home"
+
 rm -rf "$home"
 
 echo ""
