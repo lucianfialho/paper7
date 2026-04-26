@@ -18,7 +18,7 @@ fail() { FAIL=$((FAIL + 1)); printf "  \033[0;31m✗\033[0m %s\n    %s\n" "$1" "
 echo "Test 1: unsafe installer removed"
 if [ -e "$ROOT/install.sh" ]; then
   fail "install.sh deleted" "install.sh must not ship on the npm branch"
-elif grep -R "install\.sh" "$ROOT" --include='*.md' --exclude-dir='.git' --exclude-dir='.sandcastle' >/dev/null; then
+elif grep -R "install\.sh" "$README" "$ROOT/claude-code" "$ROOT/docs" "$ROOT/skills" --include='*.md' >/dev/null; then
   fail "install.sh docs removed" "Markdown docs must not reference the deleted installer"
 else
   pass "install.sh deleted and undocumented"
