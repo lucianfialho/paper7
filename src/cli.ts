@@ -5,6 +5,7 @@ import { NodeRuntime, NodeServices } from "@effect/platform-node"
 import { ArxivClient, ArxivLive, type ArxivError, type ArxivSearchResult } from "./arxiv.js"
 import type { CliCommand } from "./parser.js"
 import { parseCliArgs } from "./parser.js"
+import { PubmedClient, PubmedLive, type PubmedError, type PubmedSearchResult } from "./pubmed.js"
 
 export const VERSION = "0.6.0-beta.0"
 
@@ -30,7 +31,7 @@ Commands:
 Options:
   --source SOURCE      search only — arxiv (default) or pubmed
   --max N              Max search results / references (default: 10)
-  --sort relevance|date  Sort search results
+  --sort relevance|date  Sort search results (PubMed date uses NCBI pub date)
   --no-refs            Strip references section
   --no-cache           Force re-download
   --no-tldr            Skip TLDR enrichment in get
@@ -55,14 +56,21 @@ Examples:
   paper7 vault all
 `)
 
-const runCommand = (command: CliCommand): Effect.Effect<void, Error, ArxivClient> => {
+const runCommand = (command: CliCommand): Effect.Effect<void, Error, ArxivClient | PubmedClient> => {
   switch (command.tag) {
     case "help":
       return showHelp
     case "version":
       return Console.log(VERSION)
     case "search":
-      if (command.source !== "arxiv") return Effect.fail(new Error(`not implemented: search --source ${command.source}`))
+      if (command.source === "pubmed") {
+        return PubmedClient.use((client) => client.search(command)).pipe(
+          Effect.flatMap((result) => Console.log(renderPubmedSearch(command.query, command.max, result))),
+          Effect.catch((error) =>
+            Console.error(formatPubmedError(error)).pipe(Effect.andThen(Effect.fail(new Error(error.message))))
+          )
+        )
+      }
       return ArxivClient.use((client) => client.search(command)).pipe(
         Effect.flatMap((result) => Console.log(renderArxivSearch(command.query, command.max, result))),
         Effect.catch((error) =>
@@ -72,6 +80,23 @@ const runCommand = (command: CliCommand): Effect.Effect<void, Error, ArxivClient
     default:
       return Effect.fail(new Error(`not implemented: ${command.tag}`))
   }
+}
+
+export const renderPubmedSearch = (query: string, max: number, result: PubmedSearchResult): string => {
+  if (result.total === 0) return `No papers found for: ${query}`
+
+  const lines = [`Found ${result.total} papers (showing ${max}):`, ""]
+  for (const warning of result.warnings) lines.push(warning)
+  if (result.warnings.length > 0) lines.push("")
+
+  for (const paper of result.papers) {
+    const authors = truncateAuthors(paper.authors.join(", "))
+    lines.push(`  [${paper.id}] ${paper.title}`)
+    lines.push(`  ${authors} (${paper.published})`)
+    lines.push("")
+  }
+
+  return lines.join("\n")
 }
 
 export const renderArxivSearch = (query: string, max: number, result: ArxivSearchResult): string => {
@@ -109,12 +134,25 @@ const formatArxivError = (error: ArxivError): string => {
   }
 }
 
+const formatPubmedError = (error: PubmedError): string => {
+  switch (error._tag) {
+    case "PubmedHttpError":
+      return `error: PubMed upstream failure: ${error.message}`
+    case "PubmedTransientError":
+      return `error: PubMed upstream failure: ${error.message}`
+    case "PubmedTimeoutError":
+      return `error: PubMed upstream failure: ${error.message}`
+    case "PubmedDecodeError":
+      return `error: PubMed decode failure: ${error.message}`
+  }
+}
+
 const parsed = parseCliArgs(process.argv.slice(2))
 
 const program = parsed.ok
   ? runCommand(parsed.command)
   : Console.error(`error: ${parsed.error}`).pipe(Effect.andThen(Effect.fail(new Error(parsed.error))))
 
-NodeRuntime.runMain(program.pipe(Effect.provide(ArxivLive), Effect.provide(NodeServices.layer)), {
+NodeRuntime.runMain(program.pipe(Effect.provide(ArxivLive), Effect.provide(PubmedLive), Effect.provide(NodeServices.layer)), {
   disableErrorReporting: true,
 })
