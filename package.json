@@ -1,0 +1,35 @@
+{
+  "name": "@guataiba/paper7",
+  "version": "0.6.0-beta.0",
+  "description": "arXiv papers as clean context for LLMs",
+  "type": "module",
+  "main": "dist/cli.js",
+  "bin": {
+    "paper7": "dist/cli.js"
+  },
+  "files": [
+    "dist/"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "effect": "4.0.0-beta.51",
+    "@effect/platform-node": "4.0.0-beta.51"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0",
+    "vitest": "^3.0.0"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "keywords": [
+    "arxiv",
+    "papers",
+    "llm",
+    "cli"
+  ],
+  "license": "MIT"
+}
