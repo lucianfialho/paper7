@@ -57,12 +57,6 @@ const git = (args: readonly string[]): string =>
     stdio: ["ignore", "pipe", "pipe"],
   }).trim()
 
-const gitLines = (args: readonly string[]): readonly string[] =>
-  git(args)
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0)
-
 const dockerImageLabel = (label: string): string | undefined => {
   try {
     const value = execFileSync(
@@ -133,20 +127,13 @@ const markIssueComplete = (issue: Issue): void => {
   writeFileSync(completionMarker(issue), `${issue.file}\n`)
 }
 
-const requireCleanMergeTarget = (branch: string): void => {
-  const dirtyFiles = new Set(
-    gitLines(["status", "--porcelain"]).map((line) => line.slice(3))
-  )
-  const branchFiles = gitLines(["diff", "--name-only", `HEAD..${branch}`])
-  const conflicts = branchFiles.filter((file) => dirtyFiles.has(file))
-
-  if (conflicts.length === 0) return
-
-  throw new Error(
-    `Cannot merge ${branch}: local changes overlap branch files:\n${conflicts
-      .map((file) => `- ${file}`)
-      .join("\n")}\nCommit, stash, or move these local changes before rerunning sandcastle.`
-  )
+const isMergedIntoHead = (branch: string): boolean => {
+  try {
+    git(["merge-base", "--is-ancestor", branch, "HEAD"])
+    return true
+  } catch {
+    return false
+  }
 }
 
 const createOpenCodeState = (): OpenCodeState => {
@@ -230,7 +217,6 @@ for (let iteration = 1; iteration <= OUTER_ITERATIONS; iteration += 1) {
     agent,
     sandbox,
     name: "merger",
-    branchStrategy: { type: "branch", branch },
     promptFile: MERGE_PROMPT_FILE,
     promptArgs: {
       ISSUE_FILE: issue.file,
@@ -242,8 +228,10 @@ for (let iteration = 1; iteration <= OUTER_ITERATIONS; iteration += 1) {
     completionSignal: COMPLETION_SIGNAL,
   })
 
-  requireCleanMergeTarget(branch)
-  git(["merge", "--no-edit", branch])
+  if (!isMergedIntoHead(branch)) {
+    throw new Error(`Merger did not merge ${branch} into HEAD.`)
+  }
+
   markIssueComplete(issue)
   console.log("Merged completed branches.")
 }

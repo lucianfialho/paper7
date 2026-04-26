@@ -1,7 +1,14 @@
-Review branch {{BRANCH}} for issue {{ISSUE_FILE}}.
+Merge branch {{BRANCH}} into the current branch for issue {{ISSUE_FILE}}.
 
 Issue body:
 
 {{ISSUE_BODY}}
 
-Check whether it is ready to merge into the current branch. If there are obvious defects, fix them on {{BRANCH}}, test, and commit the fixes. If it is ready, output {{COMPLETION_SIGNAL}}.
+Steps:
+
+- Run `git merge {{BRANCH}} --no-edit`.
+- If there are conflicts, resolve them correctly by reading both sides.
+- Run the relevant tests/build.
+- If tests fail, fix them before finishing.
+- Commit the completed merge if Git requires a commit.
+- When complete, output {{COMPLETION_SIGNAL}}.
