@@ -60,7 +60,7 @@ check_error() {
   fi
 }
 
-check_parse "search parses source/max" '{"tag":"search","query":"attention","source":"pubmed","max":3}' search attention --source pubmed --max 3
+check_parse "search parses source/max/sort" '{"tag":"search","query":"attention","source":"pubmed","max":3,"sort":"date"}' search attention --source pubmed --max 3 --sort date
 check_parse "get parses arxiv id/options/range" '{"tag":"get","id":{"tag":"arxiv","id":"2401.04088"},"detailed":true,"range":{"start":35,"end":67},"refs":false,"cache":false,"tldr":false}' get 2401.04088 --detailed --range 35:67 --no-refs --no-cache --no-tldr
 check_parse_contains "get parses arxiv url" '"tag":"arxiv","id":"2401.04088"' get https://arxiv.org/abs/2401.04088v2
 check_parse_contains "get parses arxiv pdf url" '"tag":"arxiv","id":"2401.04088"' get https://arxiv.org/pdf/2401.04088.pdf
@@ -86,6 +86,7 @@ check_parse "-v parses" '{"tag":"version"}' -v
 check_error "invalid command rejected" nope
 check_error "invalid source rejected" search x --source bogus
 check_error "invalid max rejected" search x --max 0
+check_error "invalid sort rejected" search x --sort newest
 check_error "missing query rejected" search --source pubmed
 check_error "invalid id rejected" get not-an-id
 check_error "invalid pmid rejected" get pmid:abc
@@ -110,6 +111,13 @@ if [[ $code -ne 0 && "$output" == *"error: invalid paper id: nope"* ]]; then
   pass "invalid CLI id exits non-zero with deterministic error"
 else
   fail "invalid CLI id: expected non-zero deterministic error, got code=$code output=$output"
+fi
+
+output=$($PAPER7 search x --sort newest 2>&1) && code=0 || code=$?
+if [[ $code -ne 0 && "$output" == *"error: --sort must be relevance or date"* ]]; then
+  pass "invalid CLI option exits non-zero with deterministic error"
+else
+  fail "invalid CLI option: expected non-zero deterministic error, got code=$code output=$output"
 fi
 
 echo ""

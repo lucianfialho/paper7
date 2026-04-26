@@ -27,12 +27,21 @@ Commands:
   help                 Show this help
 
 Options:
+  --source SOURCE      search only — arxiv (default) or pubmed
+  --max N              Max search results / references (default: 10)
+  --sort relevance|date  Sort search results
+  --no-refs            Strip references section
+  --no-cache           Force re-download
+  --no-tldr            Skip TLDR enrichment in get
+  --detailed           Emit full paper
+  --range START:END    Detailed-only line slice
+  --json               Emit raw JSON (refs only)
   --help, -h           Show help
   --version, -v        Show version
 
 Examples:
   paper7 search "mixture of experts"
-  paper7 search "psilocybin hypertension" --source pubmed --max 5
+  paper7 search "psilocybin hypertension" --source pubmed --max 5 --sort date
   paper7 get 2401.04088
   paper7 get 2401.04088 --detailed
   paper7 get 2401.04088 --detailed --range 35:67

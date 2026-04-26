@@ -9,6 +9,7 @@ export type RangeSpec = {
 }
 
 export type Source = "arxiv" | "pubmed"
+export type SearchSort = "relevance" | "date"
 
 export type CliCommand =
   | { readonly tag: "help" }
@@ -18,6 +19,7 @@ export type CliCommand =
       readonly query: string
       readonly source: Source
       readonly max: number
+      readonly sort: SearchSort
     }
   | {
       readonly tag: "get"
@@ -123,6 +125,7 @@ const parseSearch = (args: ReadonlyArray<string>): ParseResult => {
 
   let source: Source = "arxiv"
   let max = DEFAULT_MAX
+  let sort: SearchSort = "relevance"
   let index = 1
   while (index < args.length) {
     const option = args[index]
@@ -136,12 +139,17 @@ const parseSearch = (args: ReadonlyArray<string>): ParseResult => {
       if (typeof value === "string") return error(value)
       max = value
       index += 2
+    } else if (option === "--sort") {
+      const value = args[index + 1]
+      if (value !== "relevance" && value !== "date") return error("--sort must be relevance or date")
+      sort = value
+      index += 2
     } else {
       return error(`unknown search option: ${option ?? ""}`)
     }
   }
 
-  return command({ tag: "search", query, source, max })
+  return command({ tag: "search", query, source, max, sort })
 }
 
 const parseGet = (args: ReadonlyArray<string>): ParseResult => {
