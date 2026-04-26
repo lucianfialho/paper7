@@ -5,8 +5,9 @@ import { Ar5ivClient, type Ar5ivError } from "./ar5iv.js"
 import { ArxivClient, type ArxivError, type ArxivPaperMetadata } from "./arxiv.js"
 import { cacheDir, safeDoiDir, writeCacheMeta } from "./cache.js"
 import { CrossrefClient, type CrossrefError, type CrossrefPaperMetadata } from "./crossref.js"
-import type { RangeSpec } from "./parser.js"
+import type { PaperIdentifier, RangeSpec } from "./parser.js"
 import { PubmedClient, type PubmedError, type PubmedPaperMetadata } from "./pubmed.js"
+import { SemanticScholarClient } from "./semanticScholar.js"
 
 export type GetError =
   | { readonly _tag: "GetCacheReadError"; readonly message: string; readonly cause: unknown }
@@ -34,7 +35,7 @@ export type GetDoiParams = Omit<GetArxivParams, "id"> & {
   readonly id: string
 }
 
-export const getArxivPaper = (params: GetArxivParams): Effect.Effect<string, GetError, ArxivClient | Ar5ivClient> => {
+export const getArxivPaper = (params: GetArxivParams): Effect.Effect<string, GetError, ArxivClient | Ar5ivClient | SemanticScholarClient> => {
   const dir = cacheDir(params.id)
   const cacheFile = join(dir, "paper.md")
 
@@ -51,7 +52,7 @@ export const getArxivPaper = (params: GetArxivParams): Effect.Effect<string, Get
   )
 }
 
-export const getPubmedPaper = (params: GetPubmedParams): Effect.Effect<string, GetError, PubmedClient> => {
+export const getPubmedPaper = (params: GetPubmedParams): Effect.Effect<string, GetError, PubmedClient | SemanticScholarClient> => {
   const cacheId = `pmid-${params.id}`
   const paperId = `pmid:${params.id}`
   const dir = cacheDir(cacheId)
@@ -66,7 +67,7 @@ export const getPubmedPaper = (params: GetPubmedParams): Effect.Effect<string, G
   )
 }
 
-export const getDoiPaper = (params: GetDoiParams): Effect.Effect<string, GetError, CrossrefClient | ArxivClient | Ar5ivClient> => {
+export const getDoiPaper = (params: GetDoiParams): Effect.Effect<string, GetError, CrossrefClient | ArxivClient | Ar5ivClient | SemanticScholarClient> => {
   const arxivId = arxivIdFromDoi(params.id)
   if (arxivId !== undefined) return getArxivPaper({ ...params, id: arxivId })
 
@@ -87,7 +88,7 @@ const fetchAndCache = (
   id: string,
   dir: string,
   cacheFile: string
-): Effect.Effect<string, GetError, ArxivClient | Ar5ivClient> =>
+): Effect.Effect<string, GetError, ArxivClient | Ar5ivClient | SemanticScholarClient> =>
   ArxivClient.use((arxiv) => arxiv.get(id)).pipe(
     Effect.mapError((error): GetError => ({ _tag: "GetArxivError", error })),
     Effect.zipWith(
@@ -95,7 +96,7 @@ const fetchAndCache = (
         Ar5ivClient.use((ar5iv) => ar5iv.getHtml(id)).pipe(
           Effect.mapError((error): GetError => ({ _tag: "GetAr5ivError", error }))
         ),
-        fetchTldr(id),
+        fetchTldr({ tag: "arxiv", id }),
         (html, tldr) => ({ html, tldr })
       ),
       (metadata, fetched) => buildCanonicalMarkdown(metadata, fetched.html, fetched.tldr)
@@ -119,55 +120,10 @@ const fetchAndCacheWithoutTldr = (
     Effect.flatMap((markdown) => writeCachedPaper(dir, cacheFile, markdown).pipe(Effect.as(markdown)))
   )
 
-const fetchTldr = (id: string): Effect.Effect<string | undefined> => {
-  const fixturePath = process.env.PAPER7_S2_FIXTURE
-  const source: Effect.Effect<string, unknown> = fixturePath === undefined
-    ? requestTldrJson(id)
-    : Effect.tryPromise({
-        try: () => readFile(fixturePath, { encoding: "utf8" }),
-        catch: (cause) => cause,
-      })
-
-  return source.pipe(
-    Effect.flatMap(decodeTldr),
+const fetchTldr = (id: PaperIdentifier): Effect.Effect<string | undefined, never, SemanticScholarClient> =>
+  SemanticScholarClient.use((client) => client.tldr(id)).pipe(
     Effect.catch(() => Effect.succeed(undefined))
   )
-}
-
-const requestTldrJson = (id: string): Effect.Effect<string, unknown> => {
-  const url = new URL(`https://api.semanticscholar.org/graph/v1/paper/${encodeURIComponent(s2PaperId(id))}`)
-  url.searchParams.set("fields", "tldr")
-  url.searchParams.set("tool", "paper7")
-
-  return Effect.tryPromise({
-    try: async (signal) => {
-      const response = await fetch(url, { signal })
-      if (!response.ok) throw new Error(`Semantic Scholar HTTP ${response.status}`)
-      return response.text()
-    },
-    catch: (cause) => cause,
-  })
-}
-
-const s2PaperId = (id: string): string => id.includes(":") ? id : `arXiv:${id}`
-
-const decodeTldr = (json: string): Effect.Effect<string | undefined, unknown> =>
-  Effect.try({
-    try: () => {
-      const parsed: unknown = JSON.parse(json)
-      if (!isRecord(parsed)) return undefined
-      const tldr = parsed.tldr
-      if (!isRecord(tldr)) return undefined
-      const text = tldr.text
-      if (typeof text !== "string") return undefined
-      const normalized = normalizeSummary(text)
-      return normalized === "" ? undefined : normalized
-    },
-    catch: (cause) => cause,
-  })
-
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null
 
 const readCachedPaper = (cacheFile: string): Effect.Effect<string, GetError> =>
   Effect.tryPromise({
@@ -211,10 +167,10 @@ const fetchAndCachePubmed = (
   dir: string,
   cacheFile: string,
   includeTldr: boolean
-): Effect.Effect<string, GetError, PubmedClient> =>
+): Effect.Effect<string, GetError, PubmedClient | SemanticScholarClient> =>
   PubmedClient.use((pubmed) => pubmed.get(id)).pipe(
     Effect.mapError((error): GetError => ({ _tag: "GetPubmedError", error })),
-    Effect.zipWith(includeTldr ? fetchTldr(`pmid:${id}`) : Effect.succeed(undefined), (metadata, tldr) => ({
+    Effect.zipWith(includeTldr ? fetchTldr({ tag: "pubmed", id }) : Effect.succeed(undefined), (metadata, tldr) => ({
       markdown: buildPubmedMarkdown(metadata, tldr),
       metadata,
     })),
@@ -246,10 +202,10 @@ const fetchAndCacheDoi = (
   dir: string,
   cacheFile: string,
   includeTldr: boolean
-): Effect.Effect<string, GetError, CrossrefClient> =>
+): Effect.Effect<string, GetError, CrossrefClient | SemanticScholarClient> =>
   CrossrefClient.use((crossref) => crossref.get(doi)).pipe(
     Effect.mapError((error): GetError => ({ _tag: "GetCrossrefError", error })),
-    Effect.zipWith(includeTldr ? fetchTldr(`doi:${doi}`) : Effect.succeed(undefined), (metadata, tldr) => ({
+    Effect.zipWith(includeTldr ? fetchTldr({ tag: "doi", id: doi }) : Effect.succeed(undefined), (metadata, tldr) => ({
       markdown: buildDoiMarkdown(metadata, tldr),
       metadata,
     })),

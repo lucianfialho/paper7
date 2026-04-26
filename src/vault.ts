@@ -1,8 +1,16 @@
-import { Effect } from "effect"
+import { Context, Effect, Layer } from "effect"
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
-import { cacheDirForIdentifier, listCachedPapers, type CacheError } from "./cache.js"
+import { cacheDirForIdentifierAt, listCachedPapers, type CacheError, CachePaths, type CachePaths as CachePathsContext } from "./cache.js"
 import { parsePaperIdentifier, type PaperIdentifier } from "./parser.js"
+
+export type VaultPathsShape = {
+  readonly configPath: string
+}
+
+export class VaultPaths extends Context.Service<VaultPaths, VaultPathsShape>()("paper7/VaultPaths") {}
+
+export const VaultPathsLive = Layer.effect(VaultPaths, Effect.sync(() => ({ configPath: defaultConfigPath() })))
 
 export type VaultError =
   | { readonly _tag: "VaultConfigMissing"; readonly message: string }
@@ -32,7 +40,7 @@ type CacheMeta = {
   readonly url?: string
 }
 
-export const initVault = (inputPath: string): Effect.Effect<VaultInitResult, VaultError> => {
+export const initVault = (inputPath: string): Effect.Effect<VaultInitResult, VaultError, VaultPaths> => {
   if (inputPath.trim() === "") {
     return Effect.fail({ _tag: "VaultInvalidPath", message: "invalid vault path: <empty>", path: inputPath })
   }
@@ -44,18 +52,18 @@ export const initVault = (inputPath: string): Effect.Effect<VaultInitResult, Vau
   )
 }
 
-export const exportPaperToVault = (id: PaperIdentifier): Effect.Effect<VaultExportResult, VaultError> =>
+export const exportPaperToVault = (id: PaperIdentifier): Effect.Effect<VaultExportResult, VaultError, VaultPaths | CachePathsContext> =>
   loadVaultPath().pipe(
     Effect.flatMap((vaultPath) => exportOne(vaultPath, id))
   )
 
-export const exportAllPapersToVault = (): Effect.Effect<VaultExportAllResult, VaultError> =>
+export const exportAllPapersToVault = (): Effect.Effect<VaultExportAllResult, VaultError, VaultPaths | CachePathsContext> =>
   loadVaultPath().pipe(
     Effect.flatMap((vaultPath) =>
       listCachedPapers().pipe(
         Effect.mapError(cacheToVaultError),
         Effect.flatMap((result) => {
-          const exported = Effect.forEach(result.entries, (entry): Effect.Effect<VaultExportResult, VaultError> => {
+          const exported = Effect.forEach(result.entries, (entry): Effect.Effect<VaultExportResult, VaultError, CachePathsContext> => {
             const id = parsePaperIdentifier(entry.id)
             if (id === undefined) {
               const error: VaultError = { _tag: "VaultCacheMalformed", message: `invalid cached paper id: ${entry.id}`, id: entry.id }
@@ -69,10 +77,9 @@ export const exportAllPapersToVault = (): Effect.Effect<VaultExportAllResult, Va
     )
   )
 
-const exportOne = (vaultPath: string, id: PaperIdentifier): Effect.Effect<VaultExportResult, VaultError> => {
+const exportOne = (vaultPath: string, id: PaperIdentifier): Effect.Effect<VaultExportResult, VaultError, CachePathsContext> => {
   const formattedId = formatIdentifier(id)
-  const cacheDir = cacheDirForIdentifier(id)
-  return readCachedPaper(cacheDir, formattedId).pipe(
+  return CachePaths.use((paths) => readCachedPaper(cacheDirForIdentifierAt(paths.cacheRoot, id), formattedId)).pipe(
     Effect.flatMap(({ meta, markdown }) => {
       const target = safeTargetPath(vaultPath, formattedId)
       if (target === undefined) {
@@ -84,31 +91,35 @@ const exportOne = (vaultPath: string, id: PaperIdentifier): Effect.Effect<VaultE
   )
 }
 
-const loadVaultPath = (): Effect.Effect<string, VaultError> =>
-  Effect.tryPromise({
-    try: () => readFile(configPath(), { encoding: "utf8" }),
-    catch: (cause): VaultError => isMissing(cause)
-      ? { _tag: "VaultConfigMissing", message: "vault not configured; run paper7 vault init <path>" }
-      : { _tag: "VaultFsError", message: "failed to read vault config", cause },
-  }).pipe(
-    Effect.flatMap((content) => {
-      const path = parseVaultConfig(content)
-      if (path === undefined) {
-        const error: VaultError = { _tag: "VaultConfigMissing", message: "vault not configured; run paper7 vault init <path>" }
-        return Effect.fail(error)
-      }
-      return validateVaultPath(path).pipe(Effect.as(path))
-    })
+const loadVaultPath = (): Effect.Effect<string, VaultError, VaultPaths> =>
+  VaultPaths.use((paths) =>
+    Effect.tryPromise({
+      try: () => readFile(paths.configPath, { encoding: "utf8" }),
+      catch: (cause): VaultError => isMissing(cause)
+        ? { _tag: "VaultConfigMissing", message: "vault not configured; run paper7 vault init <path>" }
+        : { _tag: "VaultFsError", message: "failed to read vault config", cause },
+    }).pipe(
+      Effect.flatMap((content) => {
+        const path = parseVaultConfig(content)
+        if (path === undefined) {
+          const error: VaultError = { _tag: "VaultConfigMissing", message: "vault not configured; run paper7 vault init <path>" }
+          return Effect.fail(error)
+        }
+        return validateVaultPath(path).pipe(Effect.as(path))
+      })
+    )
   )
 
-const writeVaultConfig = (vaultPath: string): Effect.Effect<void, VaultError> =>
-  Effect.tryPromise({
-    try: async () => {
-      await mkdir(dirname(configPath()), { recursive: true })
-      await writeFile(configPath(), `PAPER7_VAULT=${vaultPath}\n`, { encoding: "utf8" })
-    },
-    catch: (cause): VaultError => ({ _tag: "VaultFsError", message: "failed to write vault config", cause }),
-  })
+const writeVaultConfig = (vaultPath: string): Effect.Effect<void, VaultError, VaultPaths> =>
+  VaultPaths.use((paths) =>
+    Effect.tryPromise({
+      try: async () => {
+        await mkdir(dirname(paths.configPath), { recursive: true })
+        await writeFile(paths.configPath, `PAPER7_VAULT=${vaultPath}\n`, { encoding: "utf8" })
+      },
+      catch: (cause): VaultError => ({ _tag: "VaultFsError", message: "failed to write vault config", cause }),
+    })
+  )
 
 const validateVaultPath = (vaultPath: string): Effect.Effect<void, VaultError> =>
   Effect.tryPromise({
@@ -201,7 +212,7 @@ const normalizePath = (inputPath: string): string => {
   return resolve(inputPath)
 }
 
-const configPath = (): string => join(homeDir(), ".paper7", "config")
+const defaultConfigPath = (): string => join(homeDir(), ".paper7", "config")
 
 const homeDir = (): string => process.env.HOME ?? "."
 

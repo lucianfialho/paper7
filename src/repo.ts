@@ -22,6 +22,7 @@ export type RepositoryDiscoveryResult = {
 
 export type RepositoryDiscoveryError =
   | { readonly _tag: "PapersWithCodeHttpError"; readonly status: number; readonly message: string }
+  | { readonly _tag: "PapersWithCodeRateLimitError"; readonly message: string; readonly retryAfter?: string }
   | { readonly _tag: "PapersWithCodeTransientError"; readonly message: string; readonly cause: unknown }
   | { readonly _tag: "PapersWithCodeTimeoutError"; readonly message: string }
   | { readonly _tag: "PapersWithCodeDecodeError"; readonly message: string }
@@ -169,7 +170,15 @@ const loadJson = (input: {
         })
       }
 
-      if (response.status === 408 || response.status === 429 || response.status >= 500) {
+      if (response.status === 429) {
+        const retryAfter = response.headers.get("retry-after") ?? undefined
+        const error: RepositoryDiscoveryError = retryAfter === undefined
+          ? { _tag: "PapersWithCodeRateLimitError", message: "Papers With Code rate limit exceeded" }
+          : { _tag: "PapersWithCodeRateLimitError", message: "Papers With Code rate limit exceeded", retryAfter }
+        return Effect.fail(error)
+      }
+
+      if (response.status === 408 || response.status >= 500) {
         const error: RepositoryDiscoveryError = {
           _tag: "PapersWithCodeTransientError",
           message: `Papers With Code transient HTTP ${response.status}`,

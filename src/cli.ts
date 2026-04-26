@@ -1,22 +1,209 @@
 #!/usr/bin/env node
 
-import { Console, Effect } from "effect"
+import { Console, Effect, Option, Stdio } from "effect"
 import { NodeRuntime, NodeServices } from "@effect/platform-node"
+import { pathToFileURL } from "node:url"
+import { Argument, CliError, CliOutput, Command, Flag, GlobalFlag } from "effect/unstable/cli"
 import { Ar5ivClient, Ar5ivLive, type Ar5ivError } from "./ar5iv.js"
 import { ArxivClient, ArxivLive, type ArxivError, type ArxivSearchResult } from "./arxiv.js"
 import { browseCachedPapers, type BrowseError } from "./browse.js"
-import { clearCachedPapers, listCachedPapers, type CacheClearResult, type CacheError, type CacheListResult } from "./cache.js"
+import { CachePaths, CachePathsLive, clearCachedPapers, listCachedPapers, type CacheClearResult, type CacheError, type CacheListResult } from "./cache.js"
 import { CrossrefClient, CrossrefLive, type CrossrefError } from "./crossref.js"
 import { getArxivPaper, getDoiPaper, getPubmedPaper, type GetError } from "./get.js"
-import type { CliCommand } from "./parser.js"
-import { parseCliArgs } from "./parser.js"
+import type { CliCommand, PaperIdentifier, RangeSpec } from "./parser.js"
+import { parsePaperIdentifier, parseRangeSpec } from "./parser.js"
 import { PubmedClient, PubmedLive, type PubmedError, type PubmedSearchResult } from "./pubmed.js"
 import { RepositoryDiscoveryClient, RepositoryDiscoveryLive, type RepositoryDiscoveryError, type RepositoryDiscoveryResult } from "./repo.js"
 import { getReferences, type RefsError } from "./refs.js"
 import { SemanticScholarClient, SemanticScholarLive, type SemanticScholarError } from "./semanticScholar.js"
-import { exportAllPapersToVault, exportPaperToVault, initVault, type VaultError, type VaultExportAllResult, type VaultExportResult, type VaultInitResult } from "./vault.js"
+import { exportAllPapersToVault, exportPaperToVault, initVault, type VaultError, type VaultExportAllResult, type VaultExportResult, type VaultInitResult, VaultPaths, VaultPathsLive } from "./vault.js"
 
 export const VERSION = "0.6.0-beta.0"
+
+const DEFAULT_MAX = 10
+const SOURCE_CHOICES: ReadonlyArray<"arxiv" | "pubmed"> = ["arxiv", "pubmed"]
+const SORT_CHOICES: ReadonlyArray<"relevance" | "date"> = ["relevance", "date"]
+
+const showCommandHelp = (commandPath: ReadonlyArray<string>): Effect.Effect<void, CliError.ShowHelp> =>
+  Effect.fail(new CliError.ShowHelp({ commandPath, errors: [] }))
+
+const versionAlias = GlobalFlag.action({
+  flag: Flag.boolean("paper7-version").pipe(
+    Flag.withAlias("v"),
+    Flag.withDescription("Show version information")
+  ),
+  run: (_, { command, version }) =>
+    Effect.gen(function*() {
+      const formatter = yield* CliOutput.Formatter
+      yield* Console.log(formatter.formatVersion(command.name, version))
+    })
+})
+
+const parseIdentifierEffect = (commandName: string, rawId: string): Effect.Effect<PaperIdentifier, Error> => {
+  const id = parsePaperIdentifier(rawId)
+  if (id !== undefined) return Effect.succeed(id)
+  if (rawId.startsWith("pmid:")) return Effect.fail(new Error(`invalid PubMed ID: ${rawId}`))
+  if (rawId.startsWith("doi:")) return Effect.fail(new Error(`invalid DOI: ${rawId}`))
+  return Effect.fail(new Error(`${commandName} invalid paper id: ${rawId}`))
+}
+
+const parseRangeEffect = (rawRange: Option.Option<string>): Effect.Effect<RangeSpec | undefined, Error> => {
+  if (Option.isNone(rawRange)) return Effect.succeed(undefined)
+  const range = parseRangeSpec(rawRange.value)
+  return range === undefined
+    ? Effect.fail(new Error("invalid range: expected START:END"))
+    : Effect.succeed(range)
+}
+
+const searchCommand = Command.make("search", {
+  query: Argument.string("query").pipe(Argument.withDescription("Search query")),
+  source: Flag.choice("source", SOURCE_CHOICES).pipe(
+    Flag.withDefault("arxiv"),
+    Flag.withDescription("Search source")
+  ),
+  max: Flag.integer("max").pipe(
+    Flag.filterMap(
+      (value) => Number.isSafeInteger(value) && value > 0 ? Option.some(value) : Option.none(),
+      () => "--max requires a positive integer"
+    ),
+    Flag.withDefault(DEFAULT_MAX),
+    Flag.withDescription("Maximum results")
+  ),
+  sort: Flag.choice("sort", SORT_CHOICES).pipe(
+    Flag.withDefault("relevance"),
+    Flag.withDescription("Sort order")
+  )
+}, (config) => runCommand({ tag: "search", query: config.query, source: config.source, max: config.max, sort: config.sort })).pipe(
+  Command.withShortDescription("Search papers by keyword")
+)
+
+const getCommand = Command.make("get", {
+  id: Argument.string("id").pipe(Argument.withDescription("arXiv, PubMed, or DOI identifier")),
+  detailed: Flag.boolean("detailed").pipe(Flag.withDescription("Emit full paper")),
+  range: Flag.string("range").pipe(Flag.optional, Flag.withDescription("Detailed-only line slice START:END")),
+  noRefs: Flag.boolean("no-refs").pipe(Flag.withDescription("Strip references section")),
+  noCache: Flag.boolean("no-cache").pipe(Flag.withDescription("Force re-download")),
+  noTldr: Flag.boolean("no-tldr").pipe(Flag.withDescription("Skip TLDR enrichment"))
+}, (config) =>
+  Effect.gen(function*() {
+    const id = yield* parseIdentifierEffect("get", config.id)
+    const range = yield* parseRangeEffect(config.range)
+    if (range !== undefined && !config.detailed) return yield* Effect.fail(new Error("--range requires --detailed"))
+    yield* runCommand({
+      tag: "get",
+      id,
+      detailed: config.detailed,
+      range,
+      refs: !config.noRefs,
+      cache: !config.noCache,
+      tldr: !config.noTldr
+    })
+  })).pipe(Command.withShortDescription("Fetch paper content"))
+
+const refsCommand = Command.make("refs", {
+  id: Argument.string("id").pipe(Argument.withDescription("Paper identifier")),
+  max: Flag.integer("max").pipe(
+    Flag.filterMap(
+      (value) => Number.isSafeInteger(value) && value > 0 ? Option.some(value) : Option.none(),
+      () => "--max requires a positive integer"
+    ),
+    Flag.withDefault(DEFAULT_MAX),
+    Flag.withDescription("Maximum references")
+  ),
+  json: Flag.boolean("json").pipe(Flag.withDescription("Emit raw JSON"))
+}, (config) =>
+  Effect.gen(function*() {
+    const id = yield* parseIdentifierEffect("refs", config.id)
+    yield* runCommand({ tag: "refs", id, max: config.max, json: config.json })
+  })).pipe(Command.withShortDescription("List references"))
+
+const repoCommand = Command.make("repo", {
+  id: Argument.string("id").pipe(Argument.withDescription("Paper identifier"))
+}, (config) =>
+  parseIdentifierEffect("repo", config.id).pipe(
+    Effect.flatMap((id) => runCommand({ tag: "repo", id }))
+  )).pipe(Command.withShortDescription("Find code repositories"))
+
+const listCommand = Command.make("list", {}, () => runCommand({ tag: "list" })).pipe(
+  Command.withShortDescription("List cached papers")
+)
+
+const cacheClearCommand = Command.make("clear", {
+  id: Argument.string("id").pipe(Argument.optional, Argument.withDescription("Paper identifier"))
+}, (config) =>
+  Effect.gen(function*() {
+    if (config.id._tag === "None") return yield* runCommand({ tag: "cache-clear" })
+    const id = yield* parseIdentifierEffect("cache clear", config.id.value)
+    yield* runCommand({ tag: "cache-clear", id })
+  })).pipe(Command.withShortDescription("Clear cache"))
+
+const cacheCommand = Command.make("cache", {}, () => showCommandHelp(["paper7", "cache"])).pipe(
+  Command.withShortDescription("Manage cache"),
+  Command.withSubcommands([cacheClearCommand])
+)
+
+const vaultInitCommand = Command.make("init", {
+  path: Argument.string("path").pipe(Argument.withDescription("Vault path"))
+}, (config) => runCommand({ tag: "vault-init", path: config.path })).pipe(
+  Command.withShortDescription("Configure vault path")
+)
+
+const vaultAllCommand = Command.make("all", {}, () => runCommand({ tag: "vault-all" })).pipe(
+  Command.withShortDescription("Export all cached papers")
+)
+
+const vaultCommand = Command.make("vault", {
+  id: Argument.string("id").pipe(Argument.optional, Argument.withDescription("Paper identifier"))
+}, (config) =>
+  Effect.gen(function*() {
+    if (config.id._tag === "None") return yield* showCommandHelp(["paper7", "vault"])
+    const id = yield* parseIdentifierEffect("vault", config.id.value)
+    yield* runCommand({ tag: "vault-export", id })
+  })).pipe(
+    Command.withShortDescription("Export papers to vault"),
+    Command.withSubcommands([vaultInitCommand, vaultAllCommand])
+  )
+
+const browseCommand = Command.make("browse", {}, () => runCommand({ tag: "browse" })).pipe(
+  Command.withShortDescription("Browse local cache")
+)
+
+const rootForHelp = Command.make("paper7", {}, () => showCommandHelp(["paper7"])).pipe(
+  Command.withDescription("arXiv, PubMed, and DOI papers as clean context for LLMs"),
+  Command.withSubcommands([
+    searchCommand,
+    getCommand,
+    refsCommand,
+    repoCommand,
+    listCommand,
+    cacheCommand,
+    vaultCommand,
+    browseCommand
+  ]),
+  Command.withGlobalFlags([versionAlias])
+)
+
+const showRootHelp = () => Command.runWith(rootForHelp, { version: VERSION })(["--help"])
+
+const helpCommand = Command.make("help", {}, () => showRootHelp()).pipe(
+  Command.withShortDescription("Show help")
+)
+
+export const rootCommand = Command.make("paper7", {}, () => showRootHelp()).pipe(
+  Command.withDescription("arXiv, PubMed, and DOI papers as clean context for LLMs"),
+  Command.withSubcommands([
+    searchCommand,
+    getCommand,
+    refsCommand,
+    repoCommand,
+    listCommand,
+    cacheCommand,
+    vaultCommand,
+    browseCommand,
+    helpCommand
+  ]),
+  Command.withGlobalFlags([versionAlias])
+)
 
 const showHelp = Console.log(`paper7 v${VERSION} — arXiv papers as clean context for LLMs
 
@@ -65,7 +252,7 @@ Examples:
   paper7 vault all
 `)
 
-const runCommand = (command: CliCommand): Effect.Effect<void, Error, ArxivClient | Ar5ivClient | PubmedClient | CrossrefClient | SemanticScholarClient | RepositoryDiscoveryClient> => {
+const runCommand = (command: CliCommand): Effect.Effect<void, Error, ArxivClient | Ar5ivClient | PubmedClient | CrossrefClient | SemanticScholarClient | RepositoryDiscoveryClient | CachePaths | VaultPaths | Stdio.Stdio> => {
   switch (command.tag) {
     case "help":
       return showHelp
@@ -154,7 +341,7 @@ const runCommand = (command: CliCommand): Effect.Effect<void, Error, ArxivClient
   }
 }
 
-const getPaper = (command: Extract<CliCommand, { readonly tag: "get" }>): Effect.Effect<string, GetError, ArxivClient | Ar5ivClient | PubmedClient | CrossrefClient> => {
+const getPaper = (command: Extract<CliCommand, { readonly tag: "get" }>): Effect.Effect<string, GetError, ArxivClient | Ar5ivClient | PubmedClient | CrossrefClient | SemanticScholarClient> => {
   switch (command.id.tag) {
     case "arxiv":
       return getArxivPaper({
@@ -382,6 +569,10 @@ const formatRepositoryDiscoveryError = (error: RepositoryDiscoveryError): string
   switch (error._tag) {
     case "PapersWithCodeHttpError":
       return `error: Papers With Code failure: ${error.message}`
+    case "PapersWithCodeRateLimitError":
+      return error.retryAfter === undefined
+        ? `error: Papers With Code rate limit exceeded`
+        : `error: Papers With Code rate limit exceeded; retry after ${error.retryAfter}`
     case "PapersWithCodeTransientError":
       return `error: Papers With Code upstream failure: ${error.message}`
     case "PapersWithCodeTimeoutError":
@@ -423,12 +614,19 @@ const formatVaultError = (error: VaultError): string => {
   }
 }
 
-const parsed = parseCliArgs(process.argv.slice(2))
+export const main = Command.run(rootCommand, { version: VERSION }).pipe(
+  Effect.provide(ArxivLive),
+  Effect.provide(Ar5ivLive),
+  Effect.provide(PubmedLive),
+  Effect.provide(CrossrefLive),
+  Effect.provide(SemanticScholarLive),
+  Effect.provide(RepositoryDiscoveryLive),
+  Effect.provide(CachePathsLive),
+  Effect.provide(VaultPathsLive),
+  Effect.provide(NodeServices.layer)
+)
 
-const program = parsed.ok
-  ? runCommand(parsed.command)
-  : Console.error(`error: ${parsed.error}`).pipe(Effect.andThen(Effect.fail(new Error(parsed.error))))
-
-NodeRuntime.runMain(program.pipe(Effect.provide(ArxivLive), Effect.provide(Ar5ivLive), Effect.provide(PubmedLive), Effect.provide(CrossrefLive), Effect.provide(SemanticScholarLive), Effect.provide(RepositoryDiscoveryLive), Effect.provide(NodeServices.layer)), {
-  disableErrorReporting: true,
-})
+const entrypoint = process.argv[1]
+if (entrypoint !== undefined && import.meta.url === pathToFileURL(entrypoint).href) {
+  NodeRuntime.runMain(main, { disableErrorReporting: true })
+}

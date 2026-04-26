@@ -1,7 +1,15 @@
-import { Effect } from "effect"
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises"
+import { Context, Effect, Layer } from "effect"
+import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import type { PaperIdentifier } from "./parser.js"
+
+export type CachePathsShape = {
+  readonly cacheRoot: string
+}
+
+export class CachePaths extends Context.Service<CachePaths, CachePathsShape>()("paper7/CachePaths") {}
+
+export const CachePathsLive = Layer.effect(CachePaths, Effect.sync(() => ({ cacheRoot: defaultCacheRoot() })))
 
 export type CacheError = {
   readonly _tag: "CacheFsError"
@@ -40,10 +48,12 @@ type DecodedMeta =
   | { readonly _tag: "missing" }
   | { readonly _tag: "malformed" }
 
-export const listCachedPapers = (): Effect.Effect<CacheListResult, CacheError> =>
+export const listCachedPapers = (): Effect.Effect<CacheListResult, CacheError, CachePaths> =>
+  CachePaths.use((paths) => listCachedPapersAt(paths.cacheRoot))
+
+const listCachedPapersAt = (cache: string): Effect.Effect<CacheListResult, CacheError> =>
   Effect.tryPromise({
     try: async () => {
-      const cache = cacheRoot()
       const dirs = await readdir(cache, { withFileTypes: true }).catch((cause: unknown) => {
         if (isMissing(cause)) return []
         throw cause
@@ -75,10 +85,11 @@ export const listCachedPapers = (): Effect.Effect<CacheListResult, CacheError> =
     catch: (cause): CacheError => ({ _tag: "CacheFsError", message: "failed to list cache", cause }),
   })
 
-export const clearCachedPapers = (id: PaperIdentifier | undefined): Effect.Effect<CacheClearResult, CacheError> => {
-  if (id === undefined) return clearAllCachedPapers()
-  return clearOneCachedPaper(id)
-}
+export const clearCachedPapers = (id: PaperIdentifier | undefined): Effect.Effect<CacheClearResult, CacheError, CachePaths> =>
+  CachePaths.use((paths) => {
+    if (id === undefined) return clearAllCachedPapers(paths.cacheRoot)
+    return clearOneCachedPaper(paths.cacheRoot, id)
+  })
 
 export const writeCacheMeta = (
   dir: string,
@@ -110,21 +121,21 @@ export const cacheDir = (id: string): string => join(cacheRoot(), id)
 
 export const safeDoiDir = (doi: string): string => doi.replace(/\//g, "_").replace(/[^A-Za-z0-9._-]/g, "_")
 
-const clearAllCachedPapers = (): Effect.Effect<CacheClearResult, CacheError> =>
+const clearAllCachedPapers = (cache: string): Effect.Effect<CacheClearResult, CacheError> =>
   Effect.tryPromise({
     try: async () => {
-      const present = await exists(cacheRoot())
+      const present = await exists(cache)
       if (!present) return { _tag: "missing" }
-      await rm(cacheRoot(), { recursive: true, force: true })
+      await rm(cache, { recursive: true, force: true })
       return { _tag: "cleared-all" }
     },
     catch: (cause): CacheError => ({ _tag: "CacheFsError", message: "failed to clear cache", cause }),
   })
 
-const clearOneCachedPaper = (id: PaperIdentifier): Effect.Effect<CacheClearResult, CacheError> =>
+const clearOneCachedPaper = (cache: string, id: PaperIdentifier): Effect.Effect<CacheClearResult, CacheError> =>
   Effect.tryPromise({
     try: async () => {
-      const dir = cacheDirForIdentifier(id)
+      const dir = cacheDirForIdentifierAt(cache, id)
       const resultId = formatIdentifier(id)
       const present = await exists(dir)
       if (!present) return { _tag: "missing", id: resultId }
@@ -134,7 +145,20 @@ const clearOneCachedPaper = (id: PaperIdentifier): Effect.Effect<CacheClearResul
     catch: (cause): CacheError => ({ _tag: "CacheFsError", message: "failed to clear cache", cause }),
   })
 
-const cacheRoot = (): string => join(process.env.HOME ?? ".", ".paper7", "cache")
+const cacheRoot = (): string => defaultCacheRoot()
+
+const defaultCacheRoot = (): string => join(process.env.HOME ?? ".", ".paper7", "cache")
+
+export const cacheDirForIdentifierAt = (cache: string, id: PaperIdentifier): string => {
+  switch (id.tag) {
+    case "arxiv":
+      return join(cache, id.id)
+    case "pubmed":
+      return join(cache, `pmid-${id.id}`)
+    case "doi":
+      return join(cache, `doi-${safeDoiDir(id.id)}`)
+  }
+}
 
 const kindFromDir = (dirname: string): CacheKind => {
   if (/^\d{4}\.\d{4,5}$/.test(dirname)) return "arxiv"
@@ -225,7 +249,7 @@ const formatIdentifier = (id: PaperIdentifier): string => {
 }
 
 const exists = async (path: string): Promise<boolean> =>
-  readFile(path).then(
+  stat(path).then(
     () => true,
     (cause: unknown) => !isMissing(cause)
   )

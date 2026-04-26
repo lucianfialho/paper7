@@ -1,10 +1,7 @@
-import { Effect } from "effect"
+import { Effect, Option, Stdio, Stream } from "effect"
 import { readFile } from "node:fs/promises"
-import { stdin as defaultInput, stdout as defaultOutput } from "node:process"
-import { createInterface } from "node:readline/promises"
-import type { Readable, Writable } from "node:stream"
 import { join } from "node:path"
-import { cacheDirForIdentifier, listCachedPapers, type CacheEntry, type CacheError } from "./cache.js"
+import { cacheDirForIdentifierAt, CachePaths, listCachedPapers, type CacheEntry, type CacheError } from "./cache.js"
 import { parsePaperIdentifier } from "./parser.js"
 
 export type BrowseError =
@@ -18,15 +15,12 @@ type Selection =
   | { readonly _tag: "cancelled" }
   | { readonly _tag: "selected"; readonly index: number }
 
-export const browseCachedPapers = (
-  input: Readable = defaultInput,
-  output: Writable = defaultOutput
-): Effect.Effect<string, BrowseError> =>
+export const browseCachedPapers = (): Effect.Effect<string, BrowseError, CachePaths | Stdio.Stdio> =>
   listCachedPapers().pipe(
     Effect.mapError((error): BrowseError => ({ _tag: "BrowseCacheError", error })),
     Effect.flatMap((result) => {
       if (result.entries.length === 0) return Effect.succeed("No papers cached")
-      return promptForSelection(result.entries, input, output).pipe(
+      return promptForSelection(result.entries).pipe(
         Effect.flatMap((selection) => {
           if (selection._tag === "cancelled") return Effect.succeed("Browse cancelled")
           const entry = result.entries[selection.index]
@@ -41,52 +35,51 @@ export const browseCachedPapers = (
   )
 
 const promptForSelection = (
-  entries: ReadonlyArray<CacheEntry>,
-  input: Readable,
-  output: Writable
-): Effect.Effect<Selection, BrowseError> =>
-  Effect.tryPromise({
-    try: async () => {
-      output.write(renderBrowsePrompt(entries))
-      const rl = createInterface({ input, output })
-      const abort = new AbortController()
-      const cancelOnEnd = () => abort.abort()
-      input.once("end", cancelOnEnd)
-      try {
-        const answer = await rl.question("> ", { signal: abort.signal })
-        return parseSelection(answer, entries.length)
-      } catch (cause) {
-        if (isAbortError(cause)) {
-          const selection: Selection = { _tag: "cancelled" }
-          return selection
-        }
-        throw cause
-      } finally {
-        input.off("end", cancelOnEnd)
-        rl.close()
-      }
-    },
-    catch: (cause): BrowseError => ({ _tag: "BrowseIoError", message: "failed to read selection", cause }),
-  }).pipe(
+  entries: ReadonlyArray<CacheEntry>
+): Effect.Effect<Selection, BrowseError, Stdio.Stdio> =>
+  writeStdout(`${renderBrowsePrompt(entries)}> `).pipe(
+    Effect.andThen(readStdinLine),
+    Effect.map((input) => parseSelection(input, entries.length)),
     Effect.flatMap((selection) => typeof selection === "string"
       ? Effect.fail(invalidSelection(selection))
       : Effect.succeed(selection)
     )
   )
 
-const readSelectedPaper = (entry: CacheEntry): Effect.Effect<string, BrowseError> => {
+const readSelectedPaper = (entry: CacheEntry): Effect.Effect<string, BrowseError, CachePaths> => {
   const id = parsePaperIdentifier(entry.id)
   if (id === undefined) {
     return Effect.fail({ _tag: "BrowseCacheMalformed", message: `invalid cached paper id: ${entry.id}`, id: entry.id })
   }
 
-  return Effect.tryPromise({
-    try: () => readFile(join(cacheDirForIdentifier(id), "paper.md"), { encoding: "utf8" }),
-    catch: (cause): BrowseError => isMissing(cause)
-      ? { _tag: "BrowseCacheMissing", message: `no cached paper for ${entry.id}`, id: entry.id }
-      : { _tag: "BrowseIoError", message: `failed to read cached paper for ${entry.id}`, cause },
-  })
+  return CachePaths.use((paths) =>
+    Effect.tryPromise({
+      try: () => readFile(join(cacheDirForIdentifierAt(paths.cacheRoot, id), "paper.md"), { encoding: "utf8" }),
+      catch: (cause): BrowseError => isMissing(cause)
+        ? { _tag: "BrowseCacheMissing", message: `no cached paper for ${entry.id}`, id: entry.id }
+        : { _tag: "BrowseIoError", message: `failed to read cached paper for ${entry.id}`, cause },
+    })
+  )
 }
+
+const writeStdout = (text: string): Effect.Effect<void, BrowseError, Stdio.Stdio> =>
+  Stdio.Stdio.use((stdio) =>
+    Stream.make(text).pipe(
+      Stream.run(stdio.stdout()),
+      Effect.mapError((cause): BrowseError => ({ _tag: "BrowseIoError", message: "failed to write browse prompt", cause }))
+    )
+  )
+
+const readStdinLine: Effect.Effect<string, BrowseError, Stdio.Stdio> =
+  Stdio.Stdio.use((stdio) =>
+    stdio.stdin.pipe(
+      Stream.decodeText,
+      Stream.splitLines,
+      Stream.runHead,
+      Effect.map((line) => Option.isNone(line) ? "" : line.value),
+      Effect.mapError((cause): BrowseError => ({ _tag: "BrowseIoError", message: "failed to read selection", cause }))
+    )
+  )
 
 const renderBrowsePrompt = (entries: ReadonlyArray<CacheEntry>): string => {
   const lines = ["Cached papers:"]
@@ -109,5 +102,3 @@ const parseSelection = (input: string, count: number): Selection | string => {
 const invalidSelection = (message: string): BrowseError => ({ _tag: "BrowseInvalidSelection", message })
 
 const isMissing = (cause: unknown): boolean => cause instanceof Error && "code" in cause && cause.code === "ENOENT"
-
-const isAbortError = (cause: unknown): boolean => cause instanceof Error && cause.name === "AbortError"

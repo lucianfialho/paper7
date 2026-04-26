@@ -35,6 +35,7 @@ export type SemanticScholarError =
 
 export type SemanticScholarClientShape = {
   readonly references: (params: S2RefsParams) => Effect.Effect<S2ReferencesResult, SemanticScholarError>
+  readonly tldr: (id: PaperIdentifier) => Effect.Effect<string | undefined, SemanticScholarError>
 }
 
 export class SemanticScholarClient extends Context.Service<SemanticScholarClient, SemanticScholarClientShape>()("paper7/SemanticScholarClient") {}
@@ -48,6 +49,7 @@ type FetchLike = (url: string, init: FetchInit) => Promise<Response>
 type SemanticScholarClientOptions = {
   readonly apiUrl?: string
   readonly refsFixturePath?: string
+  readonly tldrFixturePath?: string
   readonly fetchImpl?: FetchLike
   readonly timeoutMs?: number
   readonly retries?: number
@@ -63,21 +65,36 @@ export const makeSemanticScholarClient = (options: SemanticScholarClientOptions 
 
   return {
     references: (params) => {
-      const json = loadReferencesJson({
+      const json = loadJson({
         fixturePath: options.refsFixturePath,
         url: buildReferencesUrl(apiUrl, params),
         fetchImpl,
         timeoutMs,
+        responseName: "Semantic Scholar references",
       })
 
       return retryTransient(json, retries, retryDelay).pipe(Effect.flatMap((body) => decodeReferences(body, params.max)))
+    },
+    tldr: (id) => {
+      const json = loadJson({
+        fixturePath: options.tldrFixturePath,
+        url: buildTldrUrl(apiUrl, id),
+        fetchImpl,
+        timeoutMs,
+        responseName: "Semantic Scholar TLDR",
+      })
+
+      return retryTransient(json, retries, retryDelay).pipe(Effect.flatMap(decodeTldr))
     },
   }
 }
 
 export const SemanticScholarLive = Layer.succeed(
   SemanticScholarClient,
-  makeSemanticScholarClient({ refsFixturePath: process.env.PAPER7_S2_REFS_FIXTURE })
+  makeSemanticScholarClient({
+    refsFixturePath: process.env.PAPER7_S2_REFS_FIXTURE,
+    tldrFixturePath: process.env.PAPER7_S2_FIXTURE,
+  })
 )
 
 export const decodeReferences = (json: string, max: number): Effect.Effect<S2ReferencesResult, SemanticScholarError> => {
@@ -104,17 +121,29 @@ export const decodeReferences = (json: string, max: number): Effect.Effect<S2Ref
   return Effect.succeed({ data: references, warnings })
 }
 
-const loadReferencesJson = (input: {
+export const decodeTldr = (json: string): Effect.Effect<string | undefined, SemanticScholarError> => {
+  const parsed = parseJson(json)
+  if (parsed._tag === "error") return Effect.fail(parsed.error)
+
+  const root = getRecord(parsed.value)
+  const tldr = root === undefined ? undefined : getRecord(root.tldr)
+  const text = tldr === undefined ? undefined : getString(tldr.text)
+  const normalized = text === undefined ? undefined : normalizeSummary(text)
+  return Effect.succeed(normalized === "" ? undefined : normalized)
+}
+
+const loadJson = (input: {
   readonly fixturePath: string | undefined
   readonly url: string
   readonly fetchImpl: FetchLike
   readonly timeoutMs: number
+  readonly responseName: string
 }): Effect.Effect<string, SemanticScholarError> => {
   const fixturePath = input.fixturePath
   if (fixturePath !== undefined) {
     return Effect.tryPromise({
       try: () => readFile(fixturePath, { encoding: "utf8" }),
-      catch: (cause): SemanticScholarError => ({ _tag: "SemanticScholarTransientError", message: "failed to read Semantic Scholar fixture", cause }),
+      catch: (cause): SemanticScholarError => ({ _tag: "SemanticScholarTransientError", message: `failed to read ${input.responseName} fixture`, cause }),
     })
   }
 
@@ -130,7 +159,7 @@ const loadReferencesJson = (input: {
       if (response.ok) {
         return Effect.tryPromise({
           try: () => response.text(),
-          catch: (cause): SemanticScholarError => ({ _tag: "SemanticScholarTransientError", message: "failed to read Semantic Scholar response", cause }),
+          catch: (cause): SemanticScholarError => ({ _tag: "SemanticScholarTransientError", message: `failed to read ${input.responseName} response`, cause }),
         })
       }
 
@@ -203,6 +232,13 @@ const buildReferencesUrl = (apiUrl: string, params: S2RefsParams): string => {
   const url = new URL(`${apiUrl}/paper/${encodeURIComponent(s2PaperId(params.id))}/references`)
   url.searchParams.set("fields", "externalIds,title,authors,year")
   url.searchParams.set("limit", String(params.max))
+  url.searchParams.set("tool", "paper7")
+  return url.toString()
+}
+
+const buildTldrUrl = (apiUrl: string, id: PaperIdentifier): string => {
+  const url = new URL(`${apiUrl}/paper/${encodeURIComponent(s2PaperId(id))}`)
+  url.searchParams.set("fields", "tldr")
   url.searchParams.set("tool", "paper7")
   return url.toString()
 }
@@ -290,5 +326,7 @@ const getYear = (value: unknown): number | string | undefined => {
   if (typeof value === "string" && value !== "") return value
   return undefined
 }
+
+const normalizeSummary = (value: string): string => value.replace(/\s+/g, " ").trim()
 
 const isAbortError = (cause: unknown): boolean => cause instanceof Error && cause.name === "AbortError"
