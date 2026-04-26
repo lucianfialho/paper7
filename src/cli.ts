@@ -2,7 +2,9 @@
 
 import { Console, Effect } from "effect"
 import { NodeRuntime, NodeServices } from "@effect/platform-node"
+import { Ar5ivClient, Ar5ivLive, type Ar5ivError } from "./ar5iv.js"
 import { ArxivClient, ArxivLive, type ArxivError, type ArxivSearchResult } from "./arxiv.js"
+import { getArxivPaper, type GetError } from "./get.js"
 import type { CliCommand } from "./parser.js"
 import { parseCliArgs } from "./parser.js"
 import { PubmedClient, PubmedLive, type PubmedError, type PubmedSearchResult } from "./pubmed.js"
@@ -56,7 +58,7 @@ Examples:
   paper7 vault all
 `)
 
-const runCommand = (command: CliCommand): Effect.Effect<void, Error, ArxivClient | PubmedClient> => {
+const runCommand = (command: CliCommand): Effect.Effect<void, Error, ArxivClient | Ar5ivClient | PubmedClient> => {
   switch (command.tag) {
     case "help":
       return showHelp
@@ -75,6 +77,22 @@ const runCommand = (command: CliCommand): Effect.Effect<void, Error, ArxivClient
         Effect.flatMap((result) => Console.log(renderArxivSearch(command.query, command.max, result))),
         Effect.catch((error) =>
           Console.error(formatArxivError(error)).pipe(Effect.andThen(Effect.fail(new Error(error.message))))
+        )
+      )
+    case "get":
+      if (command.id.tag !== "arxiv") {
+        return Effect.fail(new Error(`not implemented: get ${command.id.tag}`))
+      }
+      return getArxivPaper({
+        id: command.id.id,
+        cache: command.cache,
+        refs: command.refs,
+        detailed: command.detailed,
+        range: command.range,
+      }).pipe(
+        Effect.flatMap((markdown) => Console.log(markdown)),
+        Effect.catch((error) =>
+          Console.error(formatGetError(error)).pipe(Effect.andThen(Effect.fail(new Error(formatGetError(error)))))
         )
       )
     default:
@@ -134,6 +152,34 @@ const formatArxivError = (error: ArxivError): string => {
   }
 }
 
+const formatAr5ivError = (error: Ar5ivError): string => {
+  switch (error._tag) {
+    case "Ar5ivHttpError":
+      return `error: ar5iv upstream failure: ${error.message}`
+    case "Ar5ivTransientError":
+      return `error: ar5iv upstream failure: ${error.message}`
+    case "Ar5ivTimeoutError":
+      return `error: ar5iv upstream failure: ${error.message}`
+    case "Ar5ivDecodeError":
+      return `error: ar5iv decode failure: ${error.message}`
+  }
+}
+
+const formatGetError = (error: GetError): string => {
+  switch (error._tag) {
+    case "GetCacheReadError":
+      return `error: cache failure: ${error.message}`
+    case "GetCacheWriteError":
+      return `error: cache failure: ${error.message}`
+    case "GetRangeError":
+      return `error: ${error.message}`
+    case "GetArxivError":
+      return formatArxivError(error.error)
+    case "GetAr5ivError":
+      return formatAr5ivError(error.error)
+  }
+}
+
 const formatPubmedError = (error: PubmedError): string => {
   switch (error._tag) {
     case "PubmedHttpError":
@@ -153,6 +199,6 @@ const program = parsed.ok
   ? runCommand(parsed.command)
   : Console.error(`error: ${parsed.error}`).pipe(Effect.andThen(Effect.fail(new Error(parsed.error))))
 
-NodeRuntime.runMain(program.pipe(Effect.provide(ArxivLive), Effect.provide(PubmedLive), Effect.provide(NodeServices.layer)), {
+NodeRuntime.runMain(program.pipe(Effect.provide(ArxivLive), Effect.provide(Ar5ivLive), Effect.provide(PubmedLive), Effect.provide(NodeServices.layer)), {
   disableErrorReporting: true,
 })

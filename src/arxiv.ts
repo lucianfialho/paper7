@@ -15,6 +15,10 @@ export type ArxivPaper = {
   readonly published: string
 }
 
+export type ArxivPaperMetadata = ArxivPaper & {
+  readonly abstract: string
+}
+
 export type ArxivSearchResult = {
   readonly total: number
   readonly papers: ReadonlyArray<ArxivPaper>
@@ -35,6 +39,7 @@ export type ArxivError =
 
 export type ArxivClientShape = {
   readonly search: (params: ArxivSearchParams) => Effect.Effect<ArxivSearchResult, ArxivError>
+  readonly get: (id: string) => Effect.Effect<ArxivPaperMetadata, ArxivError>
 }
 
 export class ArxivClient extends Context.Service<ArxivClient, ArxivClientShape>()("paper7/ArxivClient") {}
@@ -73,6 +78,17 @@ export const makeArxivClient = (options: ArxivClientOptions = {}): ArxivClientSh
 
       return retryTransient(loadFeed, retries, retryDelay).pipe(Effect.flatMap((feed) => decodeArxivFeed(feed)))
     },
+    get: (id) => {
+      const fixturePath = options.fixturePath
+      const loadFeed: Effect.Effect<string, ArxivError> = fixturePath === undefined
+        ? requestGetFeed({ apiUrl, fetchImpl, id, timeoutMs })
+        : Effect.tryPromise({
+            try: () => readFile(fixturePath, { encoding: "utf8" }),
+            catch: (cause): ArxivError => ({ _tag: "ArxivTransientError", message: "failed to read arXiv fixture", cause }),
+          })
+
+      return retryTransient(loadFeed, retries, retryDelay).pipe(Effect.flatMap((feed) => decodeArxivGetFeed(feed, id)))
+    },
   }
 }
 
@@ -105,6 +121,21 @@ export const decodeArxivFeed = (xml: string): Effect.Effect<ArxivSearchResult, A
   }
 
   return Effect.succeed({ total, papers, warnings })
+}
+
+export const decodeArxivGetFeed = (xml: string, id: string): Effect.Effect<ArxivPaperMetadata, ArxivError> => {
+  const entry = tagBlocks(xml, "entry")[0]
+  if (entry === undefined) {
+    return Effect.fail({ _tag: "ArxivDecodeError", message: `arXiv response missing paper ${id}` })
+  }
+
+  const decoded = decodeEntry(entry)
+  const abstract = cleanText(firstTag(entry, "summary"))
+  if (decoded._tag !== "paper" || decoded.paper.id !== id || abstract === undefined) {
+    return Effect.fail({ _tag: "ArxivDecodeError", message: `arXiv response has invalid paper ${id}` })
+  }
+
+  return Effect.succeed({ ...decoded.paper, abstract })
 }
 
 const requestFeed = (input: {
@@ -149,6 +180,44 @@ const requestFeed = (input: {
   )
 }
 
+const requestGetFeed = (input: {
+  readonly apiUrl: string
+  readonly fetchImpl: FetchLike
+  readonly id: string
+  readonly timeoutMs: number
+}): Effect.Effect<string, ArxivError> => {
+  const url = buildGetUrl(input.apiUrl, input.id)
+  const request: Effect.Effect<Response, ArxivError> = Effect.tryPromise({
+    try: (signal) => fetchWithTimeout(input.fetchImpl, url, signal, input.timeoutMs),
+    catch: (cause): ArxivError => isAbortError(cause)
+      ? { _tag: "ArxivTimeoutError", message: `arXiv request timed out after ${input.timeoutMs}ms` }
+      : { _tag: "ArxivTransientError", message: "arXiv request failed", cause },
+  })
+
+  return request.pipe(
+    Effect.flatMap((response) => {
+      if (response.ok) {
+        return Effect.tryPromise({
+          try: () => response.text(),
+          catch: (cause): ArxivError => ({ _tag: "ArxivTransientError", message: "failed to read arXiv response", cause }),
+        })
+      }
+
+      if (response.status === 408 || response.status === 429 || response.status >= 500) {
+        const error: ArxivError = {
+          _tag: "ArxivTransientError",
+          message: `arXiv transient HTTP ${response.status}`,
+          cause: response.status,
+        }
+        return Effect.fail(error)
+      }
+
+      const error: ArxivError = { _tag: "ArxivHttpError", status: response.status, message: `arXiv HTTP ${response.status}` }
+      return Effect.fail(error)
+    })
+  )
+}
+
 const retryTransient = <A>(
   effect: Effect.Effect<A, ArxivError>,
   remaining: number,
@@ -186,6 +255,13 @@ const buildSearchUrl = (apiUrl: string, params: ArxivSearchParams): string => {
   url.searchParams.set("max_results", String(params.max))
   url.searchParams.set("sortBy", params.sort === "date" ? "submittedDate" : "relevance")
   url.searchParams.set("sortOrder", "descending")
+  return url.toString()
+}
+
+const buildGetUrl = (apiUrl: string, id: string): string => {
+  const url = new URL(apiUrl)
+  url.searchParams.set("id_list", id)
+  url.searchParams.set("max_results", "1")
   return url.toString()
 }
 

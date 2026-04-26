@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/">
+  <opensearch:totalResults>1</opensearch:totalResults>
+  <entry>
+    <id>https://arxiv.org/abs/2401.04088v2</id>
+    <updated>2024-01-09T00:00:00Z</updated>
+    <published>2024-01-08T00:00:00Z</published>
+    <title>Fixture Get Paper</title>
+    <summary>Fixture abstract from arXiv.</summary>
+    <author><name>Ada Lovelace</name></author>
+    <author><name>Grace Hopper</name></author>
+  </entry>
+</feed>

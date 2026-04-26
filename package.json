@@ -13,7 +13,7 @@
   "scripts": {
     "build": "tsc",
     "sandcastle": "tsx .sandcastle/main.mts",
-    "test": "bash tests/test_cli_skeleton.sh && bash tests/test_typed_cli_boundary.sh && bash tests/test_arxiv_search.sh && bash tests/test_pubmed_search.sh"
+    "test": "bash tests/test_cli_skeleton.sh && bash tests/test_typed_cli_boundary.sh && bash tests/test_arxiv_search.sh && bash tests/test_arxiv_get.sh && bash tests/test_pubmed_search.sh"
   },
   "dependencies": {
     "effect": "4.0.0-beta.51",
