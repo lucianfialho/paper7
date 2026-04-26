@@ -4,6 +4,7 @@ import { Console, Effect } from "effect"
 import { NodeRuntime, NodeServices } from "@effect/platform-node"
 import { Ar5ivClient, Ar5ivLive, type Ar5ivError } from "./ar5iv.js"
 import { ArxivClient, ArxivLive, type ArxivError, type ArxivSearchResult } from "./arxiv.js"
+import { browseCachedPapers, type BrowseError } from "./browse.js"
 import { clearCachedPapers, listCachedPapers, type CacheClearResult, type CacheError, type CacheListResult } from "./cache.js"
 import { CrossrefClient, CrossrefLive, type CrossrefError } from "./crossref.js"
 import { getArxivPaper, getDoiPaper, getPubmedPaper, type GetError } from "./get.js"
@@ -141,8 +142,15 @@ const runCommand = (command: CliCommand): Effect.Effect<void, Error, ArxivClient
           Console.error(formatVaultError(error)).pipe(Effect.andThen(Effect.fail(new Error(formatVaultError(error)))))
         )
       )
+    case "browse":
+      return browseCachedPapers().pipe(
+        Effect.flatMap((result) => Console.log(result)),
+        Effect.catch((error) =>
+          Console.error(formatBrowseError(error)).pipe(Effect.andThen(Effect.fail(new Error(formatBrowseError(error)))))
+        )
+      )
     default:
-      return Effect.fail(new Error(`not implemented: ${command.tag}`))
+      return Effect.fail(new Error("not implemented"))
   }
 }
 
@@ -387,6 +395,19 @@ const formatCacheError = (error: CacheError): string => {
   switch (error._tag) {
     case "CacheFsError":
       return `error: cache failure: ${error.message}`
+  }
+}
+
+const formatBrowseError = (error: BrowseError): string => {
+  switch (error._tag) {
+    case "BrowseCacheError":
+      return formatCacheError(error.error)
+    case "BrowseInvalidSelection":
+      return `error: ${error.message}`
+    case "BrowseCacheMissing":
+    case "BrowseCacheMalformed":
+    case "BrowseIoError":
+      return `error: ${error.message}`
   }
 }
 

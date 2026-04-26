@@ -60,9 +60,9 @@ paper7 get 2401.04088 --no-cache               # force re-download
 # Find source code
 paper7 repo 2401.04088
 
-# List references via Semantic Scholar (requires jq)
+# List references via Semantic Scholar
 paper7 refs 1706.03762 --max 5
-paper7 refs 1706.03762 --json | jq '.data | length'   # pipe raw JSON
+paper7 refs 1706.03762 --json                    # raw JSON for scripts
 
 # Manage your local knowledge base
 paper7 list                                     # show cached papers
@@ -74,8 +74,8 @@ paper7 vault init ~/Documents/ArxivVault        # configure vault path once
 paper7 vault 2401.04088                         # export one paper
 paper7 vault all                                # export every cached paper
 
-# Browse the local cache interactively (requires fzf; glow recommended)
-paper7 browse                                   # fzf picker + preview; Enter renders, Esc quits
+# Browse the local cache interactively
+paper7 browse                                   # Node stdin/stdout picker; Enter renders, q quits
 
 # Pipe to anything
 paper7 get 2401.04088 | claude "which section should I read?"      # compact header first
@@ -175,7 +175,7 @@ Commands:
   search <query>       Search papers by keyword (arXiv or PubMed)
   get <id>             Fetch paper; compact header by default, full text with --detailed
                        id shapes: arXiv (YYMM.NNNNN), pmid:NNN, doi:10.XXXX/...
-  refs <id>            List references via Semantic Scholar (requires jq)
+  refs <id>            List references via Semantic Scholar
                        id shapes: YYMM.NNNNN (arXiv),
                                   https://arxiv.org/abs/... (arXiv URL),
                                   pmid:NNNNN (PubMed abstract)
@@ -184,7 +184,7 @@ Commands:
   cache clear [id]     Clear cache (all, or a specific arXiv/pmid id)
   vault init <path>    Configure Obsidian-compatible vault
   vault <id>|all       Export arXiv paper(s) to vault with frontmatter + wikilinks
-  browse               Interactive fzf picker over the local cache (glow renderer)
+  browse               Interactive picker over the local cache
 
 Options:
   --source SOURCE      search only — arxiv (default) or pubmed

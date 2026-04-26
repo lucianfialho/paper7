@@ -94,7 +94,7 @@ Metadata-layer source. **Not** a full-paper fetcher — paper7 uses S2 for the c
 `{externalId}` accepts `arXiv:NNNN`, `PMID:NNNN`, `DOI:...`, or the raw S2 paperId (40-char hex).
 
 ### Response format
-JSON. Requires `jq` for parsing — paper7 fails fast with an install hint if `jq` is missing on a S2-using command. (Same tradeoff as `fzf` for `paper7 browse`.)
+JSON. Parsed internally by the Node CLI; no external JSON parser is required for normal operation.
 
 ### Rate limits
 - Without API key: ~100 requests / 5 minutes per IP. **Easy to hit when running tests in a tight loop.**
@@ -132,7 +132,7 @@ Universal DOI resolver. paper7 uses Crossref to fetch metadata + abstract for an
 The `mailto` query param puts paper7 into Crossref's "polite pool" — recommended courtesy that gets faster, more reliable responses than the default pool.
 
 ### Response format
-JSON. Parsed with `jq`. paper7 reuses the same `s2_check_jq` guard already in place for Semantic Scholar — `jq` becomes a hard dep for any `paper7 get doi:` invocation.
+JSON. Parsed internally by the Node CLI; no external JSON parser is required for normal operation.
 
 ### Rate limits
 Generous — Crossref's polite pool has no published hard cap; their etiquette guide asks ~50 requests/sec/IP as a soft ceiling. paper7 makes one `GET` per `paper7 get doi:` invocation, well within safe usage.
