@@ -9,6 +9,7 @@ import { getArxivPaper, getDoiPaper, getPubmedPaper, type GetError } from "./get
 import type { CliCommand } from "./parser.js"
 import { parseCliArgs } from "./parser.js"
 import { PubmedClient, PubmedLive, type PubmedError, type PubmedSearchResult } from "./pubmed.js"
+import { RepositoryDiscoveryClient, RepositoryDiscoveryLive, type RepositoryDiscoveryError, type RepositoryDiscoveryResult } from "./repo.js"
 import { getReferences, type RefsError } from "./refs.js"
 import { SemanticScholarClient, SemanticScholarLive, type SemanticScholarError } from "./semanticScholar.js"
 
@@ -61,7 +62,7 @@ Examples:
   paper7 vault all
 `)
 
-const runCommand = (command: CliCommand): Effect.Effect<void, Error, ArxivClient | Ar5ivClient | PubmedClient | CrossrefClient | SemanticScholarClient> => {
+const runCommand = (command: CliCommand): Effect.Effect<void, Error, ArxivClient | Ar5ivClient | PubmedClient | CrossrefClient | SemanticScholarClient | RepositoryDiscoveryClient> => {
   switch (command.tag) {
     case "help":
       return showHelp
@@ -94,6 +95,13 @@ const runCommand = (command: CliCommand): Effect.Effect<void, Error, ArxivClient
         Effect.flatMap((output) => Console.log(output)),
         Effect.catch((error) =>
           Console.error(formatRefsError(error)).pipe(Effect.andThen(Effect.fail(new Error(formatRefsError(error)))))
+        )
+      )
+    case "repo":
+      return RepositoryDiscoveryClient.use((client) => client.discover(command.id)).pipe(
+        Effect.flatMap((result) => Console.log(renderRepositoryDiscovery(result))),
+        Effect.catch((error) =>
+          Console.error(formatRepositoryDiscoveryError(error)).pipe(Effect.andThen(Effect.fail(new Error(formatRepositoryDiscoveryError(error)))))
         )
       )
     default:
@@ -164,6 +172,26 @@ export const renderArxivSearch = (query: string, max: number, result: ArxivSearc
     lines.push("")
   }
 
+  return lines.join("\n")
+}
+
+export const renderRepositoryDiscovery = (result: RepositoryDiscoveryResult): string => {
+  const lines: Array<string> = [...result.warnings]
+  if (result.candidates.length === 0) {
+    if (lines.length > 0) lines.push("")
+    lines.push("No repositories found")
+    return lines.join("\n")
+  }
+
+  if (lines.length > 0) lines.push("")
+  lines.push(`Found ${result.candidates.length} repository candidate${result.candidates.length === 1 ? "" : "s"}:`, "")
+  for (const candidate of result.candidates) {
+    const official = candidate.isOfficial === true ? " official" : ""
+    const name = candidate.name === undefined ? "" : ` ${candidate.name}`
+    lines.push(`  [${candidate.source}${official}]${name}`)
+    lines.push(`  ${candidate.url}`)
+    lines.push("")
+  }
   return lines.join("\n")
 }
 
@@ -269,12 +297,25 @@ const formatSemanticScholarError = (error: SemanticScholarError): string => {
   }
 }
 
+const formatRepositoryDiscoveryError = (error: RepositoryDiscoveryError): string => {
+  switch (error._tag) {
+    case "PapersWithCodeHttpError":
+      return `error: Papers With Code failure: ${error.message}`
+    case "PapersWithCodeTransientError":
+      return `error: Papers With Code upstream failure: ${error.message}`
+    case "PapersWithCodeTimeoutError":
+      return `error: Papers With Code upstream failure: ${error.message}`
+    case "PapersWithCodeDecodeError":
+      return `error: Papers With Code decode failure: ${error.message}`
+  }
+}
+
 const parsed = parseCliArgs(process.argv.slice(2))
 
 const program = parsed.ok
   ? runCommand(parsed.command)
   : Console.error(`error: ${parsed.error}`).pipe(Effect.andThen(Effect.fail(new Error(parsed.error))))
 
-NodeRuntime.runMain(program.pipe(Effect.provide(ArxivLive), Effect.provide(Ar5ivLive), Effect.provide(PubmedLive), Effect.provide(CrossrefLive), Effect.provide(SemanticScholarLive), Effect.provide(NodeServices.layer)), {
+NodeRuntime.runMain(program.pipe(Effect.provide(ArxivLive), Effect.provide(Ar5ivLive), Effect.provide(PubmedLive), Effect.provide(CrossrefLive), Effect.provide(SemanticScholarLive), Effect.provide(RepositoryDiscoveryLive), Effect.provide(NodeServices.layer)), {
   disableErrorReporting: true,
 })

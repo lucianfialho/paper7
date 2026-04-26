@@ -1,0 +1,10 @@
+{
+  "count": 1,
+  "results": [
+    {
+      "url": "https://github.com/example/fixture-repo",
+      "name": "fixture-repo",
+      "is_official": true
+    }
+  ]
+}
