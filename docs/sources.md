@@ -186,7 +186,7 @@ N/A.
 N/A.
 
 ### Known gaps
-- **bioRxiv/medRxiv block direct programmatic HTTP access.** Their HTML pages return HTTP 403 to `curl` requests regardless of `User-Agent` (Cloudflare with a JavaScript challenge). The original plan to fetch full text from `biorxiv.org/content/{DOI}.full` and convert it to Markdown was dropped — pure-bash + `curl` cannot pass the challenge. paper7 returns abstract-only via Crossref instead, with a `**Full text:**` link the user opens in a browser when needed.
+- **bioRxiv/medRxiv block direct programmatic HTTP access.** Their HTML pages return HTTP 403 to non-browser requests regardless of `User-Agent` (Cloudflare with a JavaScript challenge). paper7 returns abstract-only via Crossref instead, with a `**Full text:**` link the user opens in a browser when needed.
 - bioRxiv has its own JSON API at `https://api.biorxiv.org/details/biorxiv/{DOI}` — useful for date-range listings but doesn't provide full text either, and Crossref already covers metadata. paper7 doesn't currently call it.
 - bioRxiv has **no public keyword-search API**. For biomed search, use `paper7 search --source pubmed` (which covers ~all peer-reviewed biomed plus a growing share of preprints once they're indexed in PubMed).
 

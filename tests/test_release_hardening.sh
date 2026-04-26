@@ -87,11 +87,12 @@ sources_check=$(node --input-type=module -e '
   const responseSections = [...sources.matchAll(/### Response format\n([\s\S]*?)(?=\n### )/g)].map((match) => match[1])
   const bashParserClaims = responseSections.some((section) => /`(?:awk|grep|sed)`|\b(?:awk|grep|sed)\b/.test(section))
   const paper7ShInstructions = /paper7\.sh/.test(sources)
+  const shellToolClaims = /pure-bash|`curl`|`(?:awk|grep|sed)`|xmllint/.test(sources)
   const vaultNotesCurrent = /Vault exports cached arXiv, PubMed, and DOI papers/.test(sources)
-  process.stdout.write(!bashParserClaims && !paper7ShInstructions && vaultNotesCurrent ? "ok" : "bad")
+  process.stdout.write(!bashParserClaims && !paper7ShInstructions && !shellToolClaims && vaultNotesCurrent ? "ok" : "bad")
 ' "$SOURCES")
 if [ "$sources_check" != "ok" ]; then
-  fail "source docs match Node CLI" "docs/sources.md must not describe awk/grep/sed parsing or paper7.sh edits, and must document current vault PubMed/DOI export support"
+  fail "source docs match Node CLI" "docs/sources.md must not describe shell-tool parsing or paper7.sh edits, and must document current vault PubMed/DOI export support"
 elif echo "$runtime_section" | grep -Eq '`curl`|`sed`|`grep`|`awk`|xmllint|external HTML/XML parsers'; then
   fail "runtime policy avoids external tools" "README runtime policy must state normal npm CLI operation does not shell out to external tools"
 elif grep -q '| Dependencies | Vision API or poppler | `curl` |' "$README"; then
