@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/">
+  <opensearch:totalResults>42</opensearch:totalResults>
+  <entry>
+    <id>http://arxiv.org/abs/2401.04088v2</id>
+    <published>2024-01-08T18:59:59Z</published>
+    <title>
+      Test &amp; Search Paper
+    </title>
+    <author><name>Ada Lovelace</name></author>
+    <author><name>Grace Hopper</name></author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/not-an-id</id>
+    <published>2024-01-09T00:00:00Z</published>
+    <title>Malformed entry</title>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2312.00001v1</id>
+    <published>2023-12-01T10:30:00Z</published>
+    <title>Another Result</title>
+    <author><name>Katherine Johnson</name></author>
+  </entry>
+</feed>

@@ -120,13 +120,11 @@ export const parseCliArgs = (args: ReadonlyArray<string>): ParseResult => {
 }
 
 const parseSearch = (args: ReadonlyArray<string>): ParseResult => {
-  const query = args[0]
-  if (query === undefined || query.startsWith("-")) return error("search requires <query>")
-
+  let query: string | undefined
   let source: Source = "arxiv"
   let max = DEFAULT_MAX
   let sort: SearchSort = "relevance"
-  let index = 1
+  let index = 0
   while (index < args.length) {
     const option = args[index]
     if (option === "--source") {
@@ -144,11 +142,15 @@ const parseSearch = (args: ReadonlyArray<string>): ParseResult => {
       if (value !== "relevance" && value !== "date") return error("--sort must be relevance or date")
       sort = value
       index += 2
+    } else if (option !== undefined && !option.startsWith("-") && query === undefined) {
+      query = option
+      index += 1
     } else {
       return error(`unknown search option: ${option ?? ""}`)
     }
   }
 
+  if (query === undefined) return error("search requires <query>")
   return command({ tag: "search", query, source, max, sort })
 }
 

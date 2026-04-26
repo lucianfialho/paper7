@@ -2,6 +2,7 @@
 
 import { Console, Effect } from "effect"
 import { NodeRuntime, NodeServices } from "@effect/platform-node"
+import { ArxivClient, ArxivLive, type ArxivError, type ArxivSearchResult } from "./arxiv.js"
 import type { CliCommand } from "./parser.js"
 import { parseCliArgs } from "./parser.js"
 
@@ -54,14 +55,57 @@ Examples:
   paper7 vault all
 `)
 
-const runCommand = (command: CliCommand): Effect.Effect<void, Error> => {
+const runCommand = (command: CliCommand): Effect.Effect<void, Error, ArxivClient> => {
   switch (command.tag) {
     case "help":
       return showHelp
     case "version":
       return Console.log(VERSION)
+    case "search":
+      if (command.source !== "arxiv") return Effect.fail(new Error(`not implemented: search --source ${command.source}`))
+      return ArxivClient.use((client) => client.search(command)).pipe(
+        Effect.flatMap((result) => Console.log(renderArxivSearch(command.query, command.max, result))),
+        Effect.catch((error) =>
+          Console.error(formatArxivError(error)).pipe(Effect.andThen(Effect.fail(new Error(error.message))))
+        )
+      )
     default:
       return Effect.fail(new Error(`not implemented: ${command.tag}`))
+  }
+}
+
+export const renderArxivSearch = (query: string, max: number, result: ArxivSearchResult): string => {
+  if (result.total === 0) return `No papers found for: ${query}`
+
+  const lines = [`Found ${result.total} papers (showing ${max}):`, ""]
+  for (const warning of result.warnings) lines.push(warning)
+  if (result.warnings.length > 0) lines.push("")
+
+  for (const paper of result.papers) {
+    const authors = truncateAuthors(paper.authors.join(", "))
+    lines.push(`  [${paper.id}] ${paper.title}`)
+    lines.push(`  ${authors} (${paper.published})`)
+    lines.push("")
+  }
+
+  return lines.join("\n")
+}
+
+const truncateAuthors = (authors: string): string => {
+  if (authors.length <= 60) return authors
+  return `${authors.slice(0, 57)}...`
+}
+
+const formatArxivError = (error: ArxivError): string => {
+  switch (error._tag) {
+    case "ArxivHttpError":
+      return `error: arXiv upstream failure: ${error.message}`
+    case "ArxivTransientError":
+      return `error: arXiv upstream failure: ${error.message}`
+    case "ArxivTimeoutError":
+      return `error: arXiv upstream failure: ${error.message}`
+    case "ArxivDecodeError":
+      return `error: arXiv decode failure: ${error.message}`
   }
 }
 
@@ -71,6 +115,6 @@ const program = parsed.ok
   ? runCommand(parsed.command)
   : Console.error(`error: ${parsed.error}`).pipe(Effect.andThen(Effect.fail(new Error(parsed.error))))
 
-NodeRuntime.runMain(program.pipe(Effect.provide(NodeServices.layer)), {
+NodeRuntime.runMain(program.pipe(Effect.provide(ArxivLive), Effect.provide(NodeServices.layer)), {
   disableErrorReporting: true,
 })

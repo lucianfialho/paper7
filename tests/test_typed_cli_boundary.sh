@@ -61,6 +61,7 @@ check_error() {
 }
 
 check_parse "search parses source/max/sort" '{"tag":"search","query":"attention","source":"pubmed","max":3,"sort":"date"}' search attention --source pubmed --max 3 --sort date
+check_parse "search parses options before query" '{"tag":"search","query":"attention","source":"arxiv","max":2,"sort":"relevance"}' search --max 2 --sort relevance attention
 check_parse "get parses arxiv id/options/range" '{"tag":"get","id":{"tag":"arxiv","id":"2401.04088"},"detailed":true,"range":{"start":35,"end":67},"refs":false,"cache":false,"tldr":false}' get 2401.04088 --detailed --range 35:67 --no-refs --no-cache --no-tldr
 check_parse_contains "get parses arxiv url" '"tag":"arxiv","id":"2401.04088"' get https://arxiv.org/abs/2401.04088v2
 check_parse_contains "get parses arxiv url with trailing slash" '"tag":"arxiv","id":"2401.04088"' get https://arxiv.org/abs/2401.04088/
