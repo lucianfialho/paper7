@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
 import { Console, Effect } from "effect"
-import { Command } from "effect/unstable/cli"
 import { NodeRuntime, NodeServices } from "@effect/platform-node"
+import type { CliCommand } from "./parser.js"
+import { parseCliArgs } from "./parser.js"
 
 export const VERSION = "0.6.0-beta.0"
 
@@ -26,12 +27,21 @@ Commands:
   help                 Show this help
 
 Options:
+  --source SOURCE      search only — arxiv (default) or pubmed
+  --max N              Max search results / references (default: 10)
+  --sort relevance|date  Sort search results
+  --no-refs            Strip references section
+  --no-cache           Force re-download
+  --no-tldr            Skip TLDR enrichment in get
+  --detailed           Emit full paper
+  --range START:END    Detailed-only line slice
+  --json               Emit raw JSON (refs only)
   --help, -h           Show help
   --version, -v        Show version
 
 Examples:
   paper7 search "mixture of experts"
-  paper7 search "psilocybin hypertension" --source pubmed --max 5
+  paper7 search "psilocybin hypertension" --source pubmed --max 5 --sort date
   paper7 get 2401.04088
   paper7 get 2401.04088 --detailed
   paper7 get 2401.04088 --detailed --range 35:67
@@ -44,21 +54,22 @@ Examples:
   paper7 vault all
 `)
 
-const helpCommand = Command.make("help", {}, () => showHelp)
+const runCommand = (command: CliCommand): Effect.Effect<void, Error> => {
+  switch (command.tag) {
+    case "help":
+      return showHelp
+    case "version":
+      return Console.log(VERSION)
+    default:
+      return Effect.fail(new Error(`not implemented: ${command.tag}`))
+  }
+}
 
-const mainCommand = Command.make("paper7", {}, () => showHelp).pipe(
-  Command.withSubcommands([helpCommand])
-)
+const parsed = parseCliArgs(process.argv.slice(2))
 
-const args = process.argv.slice(2).map((arg) => {
-  if (arg === "-v") return "--version"
-  if (arg === "--help" || arg === "-h") return "help"
-  return arg
-})
-
-const program = Command.runWith(mainCommand, {
-  version: VERSION,
-})(args)
+const program = parsed.ok
+  ? runCommand(parsed.command)
+  : Console.error(`error: ${parsed.error}`).pipe(Effect.andThen(Effect.fail(new Error(parsed.error))))
 
 NodeRuntime.runMain(program.pipe(Effect.provide(NodeServices.layer)), {
   disableErrorReporting: true,
