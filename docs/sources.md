@@ -8,6 +8,13 @@ Conventions throughout:
 - Network failures degrade per-source: search/fetch exit non-zero with a stderr message; metadata enrichment (e.g. TLDR) is best-effort and silent.
 - IDs visible to the user are always **canonical paper7 form**: `YYMM.NNNNN` for arXiv, `pmid:NNNN` for PubMed, `doi:...` or `s2:<paperId>` for Semantic Scholar.
 
+## Upstream assumptions and network behavior
+
+- Upstreams are treated as unavailable by default in CI. Default tests use local fixtures; live API smoke tests are opt-in through source-specific environment flags such as `PAPER7_LIVE_ARXIV=1`, `PAPER7_LIVE_PUBMED=1`, and `PAPER7_LIVE_S2_REFS=1`.
+- HTTP clients use bounded timeouts and bounded retry loops for transient failures. Invalid user input is rejected before network access.
+- arXiv, PubMed, Crossref, Semantic Scholar, and Papers with Code responses are untrusted external data. Rendered paper bodies are wrapped with trust-boundary markers before reaching agent-facing output.
+- Crossref polite-pool access requires a maintainer-owned contact email before publish. `paper7@example.com` is a placeholder and must not be used for a public npm release.
+
 ---
 
 ## arXiv
@@ -127,9 +134,9 @@ Universal DOI resolver. paper7 uses Crossref to fetch metadata + abstract for an
 
 | Endpoint | Used for | Notes |
 |---|---|---|
-| `https://api.crossref.org/works/{DOI}?mailto=paper7@example.com` | `paper7 get doi:<DOI>` | Returns metadata: `title`, `author[]`, `institution`, `publisher`, `issued`, `URL`, `resource.primary.URL`, and `abstract` (when present, wrapped in JATS XML). |
+| `https://api.crossref.org/works/{DOI}?mailto=<maintainer-email>` | `paper7 get doi:<DOI>` | Returns metadata: `title`, `author[]`, `institution`, `publisher`, `issued`, `URL`, `resource.primary.URL`, and `abstract` (when present, wrapped in JATS XML). |
 
-The `mailto` query param puts paper7 into Crossref's "polite pool" — recommended courtesy that gets faster, more reliable responses than the default pool.
+The `mailto` query param puts paper7 into Crossref's "polite pool" — recommended courtesy that gets faster, more reliable responses than the default pool. The email must be a maintainer-owned contact before publishing.
 
 ### Response format
 JSON. Parsed internally by the Node CLI; no external JSON parser is required for normal operation.
@@ -138,7 +145,7 @@ JSON. Parsed internally by the Node CLI; no external JSON parser is required for
 Generous — Crossref's polite pool has no published hard cap; their etiquette guide asks ~50 requests/sec/IP as a soft ceiling. paper7 makes one `GET` per `paper7 get doi:` invocation, well within safe usage.
 
 ### Auth
-None required. No API key. The hardcoded `mailto` in `paper7.sh` (`paper7@example.com`) is acceptable for the polite pool — Crossref doesn't validate the email, just records it for accountability if abuse patterns emerge.
+None required. No API key. A real maintainer-owned polite-pool email is required before npm publication so Crossref has an accountable contact.
 
 ### Known gaps
 - Abstracts come wrapped in JATS XML (`<jats:p>`, `<jats:italic>`, etc.). paper7 strips the tags but the formatting can be uneven across publishers.

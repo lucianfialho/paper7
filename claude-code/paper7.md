@@ -26,5 +26,5 @@ Instructions:
 
 6. If paper7 is not installed, tell the user to install it:
    ```
-   curl -sSL https://raw.githubusercontent.com/lucianfialho/paper7/main/install.sh | bash
+   npm install -g @guataiba/paper7
    ```

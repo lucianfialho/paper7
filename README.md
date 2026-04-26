@@ -1,7 +1,7 @@
 <h1 align="center">paper7</h1>
 
 <p align="center">
-  Turn any arXiv or PubMed paper into clean Markdown — at runtime, with zero dependencies.<br>
+  Turn arXiv, PubMed, and DOI papers into clean Markdown.<br>
   <strong>97% smaller than PDF. 86% smaller than raw HTML.</strong><br><br>
   <a href="#benchmark"><strong>See the benchmark →</strong></a>
 </p>
@@ -9,7 +9,10 @@
 ## Install
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/lucianfialho/paper7/main/install.sh | bash
+npm install -g @guataiba/paper7
+
+# Or run without installing
+npx @guataiba/paper7 search "attention mechanism"
 ```
 
 ## AI Agent Skill
@@ -145,6 +148,10 @@ Reproduce with `./benchmark/run.sh`.
 
 paper7 skips PDF parsing entirely. For arXiv, ar5iv provides the same content as HTML without binary layout overhead. For PubMed, the E-utilities XML is already structured metadata. In both cases, paper7 extracts the body, converts tags to Markdown, and strips everything else.
 
+## Runtime and Package Policy
+
+The npm package ships prebuilt `dist/` JavaScript and has no install-time build, `install`, or `postinstall` script. Runtime dependencies are intentionally limited to `effect` and `@effect/platform-node`; normal operation does not depend on shelling out to `curl`, `sed`, `grep`, `awk`, `xmllint`, or external HTML/XML parsers. HTML/XML handling is covered by deterministic fixture tests in `tests/fixtures/`.
+
 ## Why not just use PDF?
 
 | | Raw PDF | paper7 |
@@ -208,4 +215,4 @@ Options:
 
 ---
 
-<sub>Like [context7](https://github.com/upstash/context7) but for academic papers. Pure Bash — requires only curl, sed, grep, awk.</sub>
+<sub>Like [context7](https://github.com/upstash/context7) but for academic papers.</sub>
