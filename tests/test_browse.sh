@@ -46,6 +46,13 @@ else
   fail "cancel output mismatch" "$cancelled"
 fi
 
+eof=$(HOME="$home" PATH="$browse_path" $PAPER7 browse </dev/null 2>&1)
+if [[ "$eof" == *"Browse cancelled"* ]]; then
+  pass "browse handles input EOF as cancellation"
+else
+  fail "EOF output mismatch" "$eof"
+fi
+
 set +e
 invalid=$(printf '9\n' | HOME="$home" PATH="$browse_path" $PAPER7 browse 2>&1)
 invalid_code=$?

@@ -49,10 +49,20 @@ const promptForSelection = (
     try: async () => {
       output.write(renderBrowsePrompt(entries))
       const rl = createInterface({ input, output })
+      const abort = new AbortController()
+      const cancelOnEnd = () => abort.abort()
+      input.once("end", cancelOnEnd)
       try {
-        const answer = await rl.question("> ")
+        const answer = await rl.question("> ", { signal: abort.signal })
         return parseSelection(answer, entries.length)
+      } catch (cause) {
+        if (isAbortError(cause)) {
+          const selection: Selection = { _tag: "cancelled" }
+          return selection
+        }
+        throw cause
       } finally {
+        input.off("end", cancelOnEnd)
         rl.close()
       }
     },
@@ -99,3 +109,5 @@ const parseSelection = (input: string, count: number): Selection | string => {
 const invalidSelection = (message: string): BrowseError => ({ _tag: "BrowseInvalidSelection", message })
 
 const isMissing = (cause: unknown): boolean => cause instanceof Error && "code" in cause && cause.code === "ENOENT"
+
+const isAbortError = (cause: unknown): boolean => cause instanceof Error && cause.name === "AbortError"
