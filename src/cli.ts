@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
 import { Console, Effect } from "effect"
-import { Command } from "effect/unstable/cli"
 import { NodeRuntime, NodeServices } from "@effect/platform-node"
+import type { CliCommand } from "./parser.js"
+import { parseCliArgs } from "./parser.js"
 
 export const VERSION = "0.6.0-beta.0"
 
@@ -44,21 +45,22 @@ Examples:
   paper7 vault all
 `)
 
-const helpCommand = Command.make("help", {}, () => showHelp)
+const runCommand = (command: CliCommand): Effect.Effect<void, Error> => {
+  switch (command.tag) {
+    case "help":
+      return showHelp
+    case "version":
+      return Console.log(VERSION)
+    default:
+      return Effect.fail(new Error(`not implemented: ${command.tag}`))
+  }
+}
 
-const mainCommand = Command.make("paper7", {}, () => showHelp).pipe(
-  Command.withSubcommands([helpCommand])
-)
+const parsed = parseCliArgs(process.argv.slice(2))
 
-const args = process.argv.slice(2).map((arg) => {
-  if (arg === "-v") return "--version"
-  if (arg === "--help" || arg === "-h") return "help"
-  return arg
-})
-
-const program = Command.runWith(mainCommand, {
-  version: VERSION,
-})(args)
+const program = parsed.ok
+  ? runCommand(parsed.command)
+  : Console.error(`error: ${parsed.error}`).pipe(Effect.andThen(Effect.fail(new Error(parsed.error))))
 
 NodeRuntime.runMain(program.pipe(Effect.provide(NodeServices.layer)), {
   disableErrorReporting: true,
