@@ -62,6 +62,19 @@ describe("Effect CLI skeleton", () => {
       expect(result.stdout).toContain("SUBCOMMANDS")
     }))
 
+  it.effect("prints help for short help flag and no args", () =>
+    Effect.gen(function*() {
+      const short = yield* runRootWith(["-h"])
+      const empty = yield* runRootWith([])
+
+      expect(short.stderr).toBe("")
+      expect(empty.stderr).toBe("")
+      expect(short.stdout).toContain("USAGE")
+      expect(empty.stdout).toContain("USAGE")
+      expect(short.stdout).toContain("SUBCOMMANDS")
+      expect(empty.stdout).toContain("SUBCOMMANDS")
+    }))
+
   it.effect("prints version through built-in and alias flags", () =>
     Effect.gen(function*() {
       const long = yield* runRootWith(["--version"])

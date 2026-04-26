@@ -21,6 +21,14 @@ const stringRecord = (value: unknown): Record<string, string> => {
 }
 
 describe("package hardening", () => {
+  it("keeps npm package metadata stable", () => {
+    const pkg = record(packageJson)
+
+    expect(pkg.name).toBe("@guataiba/paper7")
+    expect(pkg.version).toBe("0.6.0-beta.0")
+    expect(pkg.type).toBe("module")
+  })
+
   it("publishes prebuilt dist only", () => {
     const pkg = record(packageJson)
     const bin = record(pkg.bin)
