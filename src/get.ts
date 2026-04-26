@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { Ar5ivClient, type Ar5ivError } from "./ar5iv.js"
 import { ArxivClient, type ArxivError, type ArxivPaperMetadata } from "./arxiv.js"
+import { cacheDir, safeDoiDir, writeCacheMeta } from "./cache.js"
 import { CrossrefClient, type CrossrefError, type CrossrefPaperMetadata } from "./crossref.js"
 import type { RangeSpec } from "./parser.js"
 import { PubmedClient, type PubmedError, type PubmedPaperMetadata } from "./pubmed.js"
@@ -183,16 +184,10 @@ const writeCachedPaper = (dir: string, cacheFile: string, markdown: string): Eff
     catch: (cause): GetError => ({ _tag: "GetCacheWriteError", message: "failed to write cache", cause }),
   })
 
-const cacheDir = (id: string): string => join(process.env.HOME ?? ".", ".paper7", "cache", id)
-
 const writeMeta = (dir: string, id: string, title: string, authors: ReadonlyArray<string>, url: string): Effect.Effect<void, GetError> =>
-  Effect.tryPromise({
-    try: async () => {
-      await mkdir(dir, { recursive: true })
-      await writeFile(join(dir, "meta.json"), JSON.stringify({ id, title, authors: authors.join(", "), url }), { encoding: "utf8" })
-    },
-    catch: (cause): GetError => ({ _tag: "GetCacheWriteError", message: "failed to write cache", cause }),
-  })
+  writeCacheMeta(dir, id, title, authors, url).pipe(
+    Effect.mapError((error): GetError => ({ _tag: "GetCacheWriteError", message: error.message, cause: error.cause }))
+  )
 
 const buildCanonicalMarkdown = (metadata: ArxivPaperMetadata, html: string, tldr: string | undefined): string => {
   const body = htmlToMarkdown(html)
@@ -438,8 +433,6 @@ const stripTldr = (markdown: string): string =>
 
 const wrapUntrusted = (markdown: string, source: string, id: string): string =>
   `<untrusted-content source="${escapeAttribute(source)}" id="${escapeAttribute(id)}">\n${markdown.trimEnd()}\n</untrusted-content>`
-
-const safeDoiDir = (doi: string): string => doi.replace(/\//g, "_").replace(/[^A-Za-z0-9._-]/g, "_")
 
 const arxivIdFromDoi = (doi: string): string | undefined => {
   const match = /^10\.48550\/arXiv\.(\d{4}\.\d{4,5})$/i.exec(doi)

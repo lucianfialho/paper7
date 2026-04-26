@@ -4,6 +4,7 @@ import { Console, Effect } from "effect"
 import { NodeRuntime, NodeServices } from "@effect/platform-node"
 import { Ar5ivClient, Ar5ivLive, type Ar5ivError } from "./ar5iv.js"
 import { ArxivClient, ArxivLive, type ArxivError, type ArxivSearchResult } from "./arxiv.js"
+import { clearCachedPapers, listCachedPapers, type CacheClearResult, type CacheError, type CacheListResult } from "./cache.js"
 import { CrossrefClient, CrossrefLive, type CrossrefError } from "./crossref.js"
 import { getArxivPaper, getDoiPaper, getPubmedPaper, type GetError } from "./get.js"
 import type { CliCommand } from "./parser.js"
@@ -104,6 +105,20 @@ const runCommand = (command: CliCommand): Effect.Effect<void, Error, ArxivClient
           Console.error(formatRepositoryDiscoveryError(error)).pipe(Effect.andThen(Effect.fail(new Error(formatRepositoryDiscoveryError(error)))))
         )
       )
+    case "list":
+      return listCachedPapers().pipe(
+        Effect.flatMap((result) => Console.log(renderCacheList(result))),
+        Effect.catch((error) =>
+          Console.error(formatCacheError(error)).pipe(Effect.andThen(Effect.fail(new Error(formatCacheError(error)))))
+        )
+      )
+    case "cache-clear":
+      return clearCachedPapers(command.id).pipe(
+        Effect.flatMap((result) => Console.log(renderCacheClear(result))),
+        Effect.catch((error) =>
+          Console.error(formatCacheError(error)).pipe(Effect.andThen(Effect.fail(new Error(formatCacheError(error)))))
+        )
+      )
     default:
       return Effect.fail(new Error(`not implemented: ${command.tag}`))
   }
@@ -193,6 +208,36 @@ export const renderRepositoryDiscovery = (result: RepositoryDiscoveryResult): st
     lines.push("")
   }
   return lines.join("\n")
+}
+
+export const renderCacheList = (result: CacheListResult): string => {
+  const lines: Array<string> = [...result.warnings]
+  if (result.entries.length === 0) {
+    if (lines.length > 0) lines.push("")
+    lines.push("No cached papers")
+    return lines.join("\n")
+  }
+
+  if (lines.length > 0) lines.push("")
+  lines.push(`Cached papers (${result.entries.length}):`, "")
+  for (const entry of result.entries) {
+    lines.push(`  [${entry.id}] ${entry.title}`)
+    if (entry.authors !== undefined) lines.push(`  ${truncateAuthors(entry.authors)}`)
+    if (entry.url !== undefined) lines.push(`  ${entry.url}`)
+    lines.push("")
+  }
+  return lines.join("\n")
+}
+
+export const renderCacheClear = (result: CacheClearResult): string => {
+  switch (result._tag) {
+    case "cleared-all":
+      return "Cleared paper7 cache"
+    case "cleared-one":
+      return `Cleared cache for ${result.id}`
+    case "missing":
+      return result.id === undefined ? "No paper7 cache found" : `No cache entry for ${result.id}`
+  }
 }
 
 const truncateAuthors = (authors: string): string => {
@@ -307,6 +352,13 @@ const formatRepositoryDiscoveryError = (error: RepositoryDiscoveryError): string
       return `error: Papers With Code upstream failure: ${error.message}`
     case "PapersWithCodeDecodeError":
       return `error: Papers With Code decode failure: ${error.message}`
+  }
+}
+
+const formatCacheError = (error: CacheError): string => {
+  switch (error._tag) {
+    case "CacheFsError":
+      return `error: cache failure: ${error.message}`
   }
 }
 
