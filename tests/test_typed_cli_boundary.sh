@@ -63,7 +63,11 @@ check_error() {
 check_parse "search parses source/max/sort" '{"tag":"search","query":"attention","source":"pubmed","max":3,"sort":"date"}' search attention --source pubmed --max 3 --sort date
 check_parse "get parses arxiv id/options/range" '{"tag":"get","id":{"tag":"arxiv","id":"2401.04088"},"detailed":true,"range":{"start":35,"end":67},"refs":false,"cache":false,"tldr":false}' get 2401.04088 --detailed --range 35:67 --no-refs --no-cache --no-tldr
 check_parse_contains "get parses arxiv url" '"tag":"arxiv","id":"2401.04088"' get https://arxiv.org/abs/2401.04088v2
+check_parse_contains "get parses arxiv url with trailing slash" '"tag":"arxiv","id":"2401.04088"' get https://arxiv.org/abs/2401.04088/
+check_parse_contains "get parses arxiv url with query" '"tag":"arxiv","id":"2401.04088"' get 'https://arxiv.org/abs/2401.04088?context=cs'
+check_parse_contains "get parses arxiv url with fragment" '"tag":"arxiv","id":"2401.04088"' get 'https://arxiv.org/abs/2401.04088#section'
 check_parse_contains "get parses arxiv pdf url" '"tag":"arxiv","id":"2401.04088"' get https://arxiv.org/pdf/2401.04088.pdf
+check_parse_contains "get parses arxiv pdf url with query" '"tag":"arxiv","id":"2401.04088"' get 'https://arxiv.org/pdf/2401.04088.pdf?download=1'
 check_parse_contains "get parses ar5iv url" '"tag":"arxiv","id":"2401.04088"' get https://ar5iv.labs.arxiv.org/html/2401.04088
 check_parse_contains "get parses pubmed prefix" '"tag":"pubmed","id":"38903003"' get pmid:38903003
 check_parse_contains "get parses pubmed url" '"tag":"pubmed","id":"38903003"' get https://pubmed.ncbi.nlm.nih.gov/38903003/

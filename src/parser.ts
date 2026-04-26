@@ -282,7 +282,9 @@ const parseArxivUrl = (input: string): string | undefined => {
 
   for (const prefix of prefixes) {
     if (input.startsWith(prefix)) {
-      return normalizeArxivId(input.slice(prefix.length).replace(/\.pdf$/, ""))
+      const [pathWithSuffix = ""] = input.slice(prefix.length).split(/[?#]/)
+      const path = pathWithSuffix.endsWith("/") ? pathWithSuffix.slice(0, -1) : pathWithSuffix
+      return normalizeArxivId(path.replace(/\.pdf$/, ""))
     }
   }
 
