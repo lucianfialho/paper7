@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PubmedArticleSet>
+  <PubmedArticle>
+    <MedlineCitation>
+      <Article>
+        <Journal>
+          <Title>Fixture Journal</Title>
+          <JournalIssue>
+            <PubDate>
+              <Year>2024</Year>
+              <Month>Jun</Month>
+              <Day>18</Day>
+            </PubDate>
+          </JournalIssue>
+        </Journal>
+        <ArticleTitle>Fixture PubMed Paper</ArticleTitle>
+        <ELocationID EIdType="doi">10.1000/pubmed.fixture</ELocationID>
+        <Abstract>
+          <AbstractText Label="Background">PubMed fixture abstract first sentence.</AbstractText>
+          <AbstractText Label="Methods">Second abstract section.</AbstractText>
+        </Abstract>
+        <AuthorList>
+          <Author>
+            <LastName>Lovelace</LastName>
+            <Initials>A</Initials>
+          </Author>
+          <Author>
+            <LastName>Hopper</LastName>
+            <Initials>G</Initials>
+          </Author>
+        </AuthorList>
+      </Article>
+    </MedlineCitation>
+    <PubmedData>
+      <ArticleIdList>
+        <ArticleId IdType="doi">10.1000/pubmed.fixture</ArticleId>
+      </ArticleIdList>
+    </PubmedData>
+  </PubmedArticle>
+</PubmedArticleSet>

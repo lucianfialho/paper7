@@ -3,7 +3,9 @@ import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { Ar5ivClient, type Ar5ivError } from "./ar5iv.js"
 import { ArxivClient, type ArxivError, type ArxivPaperMetadata } from "./arxiv.js"
+import { CrossrefClient, type CrossrefError, type CrossrefPaperMetadata } from "./crossref.js"
 import type { RangeSpec } from "./parser.js"
+import { PubmedClient, type PubmedError, type PubmedPaperMetadata } from "./pubmed.js"
 
 export type GetError =
   | { readonly _tag: "GetCacheReadError"; readonly message: string; readonly cause: unknown }
@@ -11,6 +13,8 @@ export type GetError =
   | { readonly _tag: "GetRangeError"; readonly message: string }
   | { readonly _tag: "GetArxivError"; readonly error: ArxivError }
   | { readonly _tag: "GetAr5ivError"; readonly error: Ar5ivError }
+  | { readonly _tag: "GetPubmedError"; readonly error: PubmedError }
+  | { readonly _tag: "GetCrossrefError"; readonly error: CrossrefError }
 
 export type GetArxivParams = {
   readonly id: string
@@ -19,6 +23,14 @@ export type GetArxivParams = {
   readonly tldr: boolean
   readonly detailed: boolean
   readonly range?: RangeSpec
+}
+
+export type GetPubmedParams = Omit<GetArxivParams, "id"> & {
+  readonly id: string
+}
+
+export type GetDoiParams = Omit<GetArxivParams, "id"> & {
+  readonly id: string
 }
 
 export const getArxivPaper = (params: GetArxivParams): Effect.Effect<string, GetError, ArxivClient | Ar5ivClient> => {
@@ -34,7 +46,39 @@ export const getArxivPaper = (params: GetArxivParams): Effect.Effect<string, Get
 
   return paper.pipe(
     Effect.flatMap((markdown) => renderMarkdown(markdown, params)),
-    Effect.map((markdown) => wrapUntrusted(markdown, params.id))
+    Effect.map((markdown) => wrapUntrusted(markdown, "arxiv", params.id))
+  )
+}
+
+export const getPubmedPaper = (params: GetPubmedParams): Effect.Effect<string, GetError, PubmedClient> => {
+  const cacheId = `pmid-${params.id}`
+  const paperId = `pmid:${params.id}`
+  const dir = cacheDir(cacheId)
+  const cacheFile = join(dir, "paper.md")
+  const paper = params.cache
+    ? readCachedPaper(cacheFile).pipe(Effect.catch(() => fetchAndCachePubmed(params.id, dir, cacheFile, params.tldr)))
+    : fetchAndCachePubmed(params.id, dir, cacheFile, params.tldr)
+
+  return paper.pipe(
+    Effect.flatMap((markdown) => renderMarkdown(markdown, { ...params, id: paperId })),
+    Effect.map((markdown) => wrapUntrusted(markdown, "pubmed", paperId))
+  )
+}
+
+export const getDoiPaper = (params: GetDoiParams): Effect.Effect<string, GetError, CrossrefClient | ArxivClient | Ar5ivClient> => {
+  const arxivId = arxivIdFromDoi(params.id)
+  if (arxivId !== undefined) return getArxivPaper({ ...params, id: arxivId })
+
+  const paperId = `doi:${params.id}`
+  const dir = cacheDir(`doi-${safeDoiDir(params.id)}`)
+  const cacheFile = join(dir, "paper.md")
+  const paper = params.cache
+    ? readCachedPaper(cacheFile).pipe(Effect.catch(() => fetchAndCacheDoi(params.id, dir, cacheFile, params.tldr)))
+    : fetchAndCacheDoi(params.id, dir, cacheFile, params.tldr)
+
+  return paper.pipe(
+    Effect.flatMap((markdown) => renderMarkdown(markdown, { ...params, id: paperId })),
+    Effect.map((markdown) => wrapUntrusted(markdown, "doi", paperId))
   )
 }
 
@@ -104,7 +148,7 @@ const requestTldrJson = (id: string): Effect.Effect<string, unknown> => {
   })
 }
 
-const s2PaperId = (id: string): string => `arXiv:${id}`
+const s2PaperId = (id: string): string => id.includes(":") ? id : `arXiv:${id}`
 
 const decodeTldr = (json: string): Effect.Effect<string | undefined, unknown> =>
   Effect.try({
@@ -141,6 +185,15 @@ const writeCachedPaper = (dir: string, cacheFile: string, markdown: string): Eff
 
 const cacheDir = (id: string): string => join(process.env.HOME ?? ".", ".paper7", "cache", id)
 
+const writeMeta = (dir: string, id: string, title: string, authors: ReadonlyArray<string>, url: string): Effect.Effect<void, GetError> =>
+  Effect.tryPromise({
+    try: async () => {
+      await mkdir(dir, { recursive: true })
+      await writeFile(join(dir, "meta.json"), JSON.stringify({ id, title, authors: authors.join(", "), url }), { encoding: "utf8" })
+    },
+    catch: (cause): GetError => ({ _tag: "GetCacheWriteError", message: "failed to write cache", cause }),
+  })
+
 const buildCanonicalMarkdown = (metadata: ArxivPaperMetadata, html: string, tldr: string | undefined): string => {
   const body = htmlToMarkdown(html)
   return [
@@ -157,6 +210,76 @@ const buildCanonicalMarkdown = (metadata: ArxivPaperMetadata, html: string, tldr
     body,
   ].join("\n") + "\n"
 }
+
+const fetchAndCachePubmed = (
+  id: string,
+  dir: string,
+  cacheFile: string,
+  includeTldr: boolean
+): Effect.Effect<string, GetError, PubmedClient> =>
+  PubmedClient.use((pubmed) => pubmed.get(id)).pipe(
+    Effect.mapError((error): GetError => ({ _tag: "GetPubmedError", error })),
+    Effect.zipWith(includeTldr ? fetchTldr(`pmid:${id}`) : Effect.succeed(undefined), (metadata, tldr) => ({
+      markdown: buildPubmedMarkdown(metadata, tldr),
+      metadata,
+    })),
+    Effect.flatMap(({ markdown, metadata }) => writeCachedPaper(dir, cacheFile, markdown).pipe(
+      Effect.andThen(writeMeta(dir, metadata.id, metadata.title, metadata.authors, `https://pubmed.ncbi.nlm.nih.gov/${id}/`)),
+      Effect.as(markdown)
+    ))
+  )
+
+const buildPubmedMarkdown = (metadata: PubmedPaperMetadata, tldr: string | undefined): string => [
+  `# ${metadata.title}`,
+  "",
+  `**Authors:** ${metadata.authors.join(", ")}`,
+  ...(metadata.journal === undefined ? [] : [`**Journal:** ${metadata.journal}`]),
+  `**Published:** ${metadata.published}`,
+  ...(metadata.doi === undefined ? [] : [`**DOI:** ${metadata.doi}`]),
+  `**PubMed:** https://pubmed.ncbi.nlm.nih.gov/${metadata.id.slice("pmid:".length)}/`,
+  ...(tldr === undefined ? [] : [`**TLDR:** ${tldr}`]),
+  "",
+  "---",
+  "",
+  "## Abstract",
+  "",
+  metadata.abstract,
+].join("\n") + "\n"
+
+const fetchAndCacheDoi = (
+  doi: string,
+  dir: string,
+  cacheFile: string,
+  includeTldr: boolean
+): Effect.Effect<string, GetError, CrossrefClient> =>
+  CrossrefClient.use((crossref) => crossref.get(doi)).pipe(
+    Effect.mapError((error): GetError => ({ _tag: "GetCrossrefError", error })),
+    Effect.zipWith(includeTldr ? fetchTldr(`doi:${doi}`) : Effect.succeed(undefined), (metadata, tldr) => ({
+      markdown: buildDoiMarkdown(metadata, tldr),
+      metadata,
+    })),
+    Effect.flatMap(({ markdown, metadata }) => writeCachedPaper(dir, cacheFile, markdown).pipe(
+      Effect.andThen(writeMeta(dir, metadata.id, metadata.title, metadata.authors, metadata.fullTextUrl)),
+      Effect.as(markdown)
+    ))
+  )
+
+const buildDoiMarkdown = (metadata: CrossrefPaperMetadata, tldr: string | undefined): string => [
+  `# ${metadata.title}`,
+  "",
+  `**Authors:** ${metadata.authors.join(", ")}`,
+  `**Source:** ${metadata.source}`,
+  `**Published:** ${metadata.published}`,
+  `**DOI:** ${metadata.doi}`,
+  `**Full text:** ${metadata.fullTextUrl}`,
+  ...(tldr === undefined ? [] : [`**TLDR:** ${tldr}`]),
+  "",
+  "---",
+  "",
+  "## Abstract",
+  "",
+  metadata.abstract,
+].join("\n") + "\n"
 
 const renderMarkdown = (markdown: string, params: GetArxivParams): Effect.Effect<string, GetError> => {
   const withoutTldr = params.tldr ? markdown : stripTldr(markdown)
@@ -313,8 +436,15 @@ const stripReferences = (markdown: string): string => {
 const stripTldr = (markdown: string): string =>
   markdown.split("\n").filter((line) => !/^\*\*TLDR:\*\*/.test(line)).join("\n")
 
-const wrapUntrusted = (markdown: string, id: string): string =>
-  `<untrusted-content source="arxiv" id="${escapeAttribute(id)}">\n${markdown.trimEnd()}\n</untrusted-content>`
+const wrapUntrusted = (markdown: string, source: string, id: string): string =>
+  `<untrusted-content source="${escapeAttribute(source)}" id="${escapeAttribute(id)}">\n${markdown.trimEnd()}\n</untrusted-content>`
+
+const safeDoiDir = (doi: string): string => doi.replace(/\//g, "_").replace(/[^A-Za-z0-9._-]/g, "_")
+
+const arxivIdFromDoi = (doi: string): string | undefined => {
+  const match = /^10\.48550\/arXiv\.(\d{4}\.\d{4,5})$/i.exec(doi)
+  return match?.[1]
+}
 
 const htmlToMarkdown = (html: string): string => {
   const article = articleHtml(html)

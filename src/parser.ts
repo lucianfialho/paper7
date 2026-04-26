@@ -251,6 +251,8 @@ const parseVault = (args: ReadonlyArray<string>): ParseResult => {
 const parseRequiredIdentifier = (commandName: string, rawId: string | undefined): PaperIdentifier | string => {
   if (rawId === undefined) return `${commandName} requires <id>`
   const id = parsePaperIdentifier(rawId)
+  if (id === undefined && rawId.startsWith("pmid:")) return `invalid PubMed ID: ${rawId}`
+  if (id === undefined && rawId.startsWith("doi:")) return `invalid DOI: ${rawId}`
   if (id === undefined) return `invalid paper id: ${rawId}`
   return id
 }

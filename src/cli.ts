@@ -4,7 +4,8 @@ import { Console, Effect } from "effect"
 import { NodeRuntime, NodeServices } from "@effect/platform-node"
 import { Ar5ivClient, Ar5ivLive, type Ar5ivError } from "./ar5iv.js"
 import { ArxivClient, ArxivLive, type ArxivError, type ArxivSearchResult } from "./arxiv.js"
-import { getArxivPaper, type GetError } from "./get.js"
+import { CrossrefClient, CrossrefLive, type CrossrefError } from "./crossref.js"
+import { getArxivPaper, getDoiPaper, getPubmedPaper, type GetError } from "./get.js"
 import type { CliCommand } from "./parser.js"
 import { parseCliArgs } from "./parser.js"
 import { PubmedClient, PubmedLive, type PubmedError, type PubmedSearchResult } from "./pubmed.js"
@@ -59,7 +60,7 @@ Examples:
   paper7 vault all
 `)
 
-const runCommand = (command: CliCommand): Effect.Effect<void, Error, ArxivClient | Ar5ivClient | PubmedClient> => {
+const runCommand = (command: CliCommand): Effect.Effect<void, Error, ArxivClient | Ar5ivClient | PubmedClient | CrossrefClient> => {
   switch (command.tag) {
     case "help":
       return showHelp
@@ -81,17 +82,7 @@ const runCommand = (command: CliCommand): Effect.Effect<void, Error, ArxivClient
         )
       )
     case "get":
-      if (command.id.tag !== "arxiv") {
-        return Effect.fail(new Error(`not implemented: get ${command.id.tag}`))
-      }
-      return getArxivPaper({
-        id: command.id.id,
-        cache: command.cache,
-        refs: command.refs,
-        tldr: command.tldr,
-        detailed: command.detailed,
-        range: command.range,
-      }).pipe(
+      return getPaper(command).pipe(
         Effect.flatMap((markdown) => Console.log(markdown)),
         Effect.catch((error) =>
           Console.error(formatGetError(error)).pipe(Effect.andThen(Effect.fail(new Error(formatGetError(error)))))
@@ -106,6 +97,38 @@ const runCommand = (command: CliCommand): Effect.Effect<void, Error, ArxivClient
       )
     default:
       return Effect.fail(new Error(`not implemented: ${command.tag}`))
+  }
+}
+
+const getPaper = (command: Extract<CliCommand, { readonly tag: "get" }>): Effect.Effect<string, GetError, ArxivClient | Ar5ivClient | PubmedClient | CrossrefClient> => {
+  switch (command.id.tag) {
+    case "arxiv":
+      return getArxivPaper({
+        id: command.id.id,
+        cache: command.cache,
+        refs: command.refs,
+        tldr: command.tldr,
+        detailed: command.detailed,
+        range: command.range,
+      })
+    case "pubmed":
+      return getPubmedPaper({
+        id: command.id.id,
+        cache: command.cache,
+        refs: command.refs,
+        tldr: command.tldr,
+        detailed: command.detailed,
+        range: command.range,
+      })
+    case "doi":
+      return getDoiPaper({
+        id: command.id.id,
+        cache: command.cache,
+        refs: command.refs,
+        tldr: command.tldr,
+        detailed: command.detailed,
+        range: command.range,
+      })
   }
 }
 
@@ -186,6 +209,10 @@ const formatGetError = (error: GetError): string => {
       return formatArxivError(error.error)
     case "GetAr5ivError":
       return formatAr5ivError(error.error)
+    case "GetPubmedError":
+      return formatPubmedError(error.error)
+    case "GetCrossrefError":
+      return formatCrossrefError(error.error)
   }
 }
 
@@ -199,6 +226,19 @@ const formatPubmedError = (error: PubmedError): string => {
       return `error: PubMed upstream failure: ${error.message}`
     case "PubmedDecodeError":
       return `error: PubMed decode failure: ${error.message}`
+  }
+}
+
+const formatCrossrefError = (error: CrossrefError): string => {
+  switch (error._tag) {
+    case "CrossrefHttpError":
+      return `error: Crossref upstream failure: ${error.message}`
+    case "CrossrefTransientError":
+      return `error: Crossref upstream failure: ${error.message}`
+    case "CrossrefTimeoutError":
+      return `error: Crossref upstream failure: ${error.message}`
+    case "CrossrefDecodeError":
+      return `error: Crossref decode failure: ${error.message}`
   }
 }
 
@@ -217,6 +257,6 @@ const program = parsed.ok
   ? runCommand(parsed.command)
   : Console.error(`error: ${parsed.error}`).pipe(Effect.andThen(Effect.fail(new Error(parsed.error))))
 
-NodeRuntime.runMain(program.pipe(Effect.provide(ArxivLive), Effect.provide(Ar5ivLive), Effect.provide(PubmedLive), Effect.provide(NodeServices.layer)), {
+NodeRuntime.runMain(program.pipe(Effect.provide(ArxivLive), Effect.provide(Ar5ivLive), Effect.provide(PubmedLive), Effect.provide(CrossrefLive), Effect.provide(NodeServices.layer)), {
   disableErrorReporting: true,
 })
