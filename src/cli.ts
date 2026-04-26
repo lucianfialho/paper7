@@ -8,6 +8,7 @@ import { getArxivPaper, type GetError } from "./get.js"
 import type { CliCommand } from "./parser.js"
 import { parseCliArgs } from "./parser.js"
 import { PubmedClient, PubmedLive, type PubmedError, type PubmedSearchResult } from "./pubmed.js"
+import { getReferences, type RefsError } from "./refs.js"
 
 export const VERSION = "0.6.0-beta.0"
 
@@ -87,12 +88,20 @@ const runCommand = (command: CliCommand): Effect.Effect<void, Error, ArxivClient
         id: command.id.id,
         cache: command.cache,
         refs: command.refs,
+        tldr: command.tldr,
         detailed: command.detailed,
         range: command.range,
       }).pipe(
         Effect.flatMap((markdown) => Console.log(markdown)),
         Effect.catch((error) =>
           Console.error(formatGetError(error)).pipe(Effect.andThen(Effect.fail(new Error(formatGetError(error)))))
+        )
+      )
+    case "refs":
+      return getReferences(command).pipe(
+        Effect.flatMap((output) => Console.log(output)),
+        Effect.catch((error) =>
+          Console.error(formatRefsError(error)).pipe(Effect.andThen(Effect.fail(new Error(formatRefsError(error)))))
         )
       )
     default:
@@ -190,6 +199,15 @@ const formatPubmedError = (error: PubmedError): string => {
       return `error: PubMed upstream failure: ${error.message}`
     case "PubmedDecodeError":
       return `error: PubMed decode failure: ${error.message}`
+  }
+}
+
+const formatRefsError = (error: RefsError): string => {
+  switch (error._tag) {
+    case "RefsHttpError":
+      return `error: Semantic Scholar failure: ${error.message}`
+    case "RefsDecodeError":
+      return `error: Semantic Scholar decode failure: ${error.message}`
   }
 }
 

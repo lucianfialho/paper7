@@ -1,0 +1,13 @@
+{
+  "data": [
+    {
+      "citedPaper": {
+        "paperId": "abc123",
+        "externalIds": { "ArXiv": "1706.03762" },
+        "title": "Attention Is All You Need",
+        "authors": [{ "name": "Ashish Vaswani" }, { "name": "Noam Shazeer" }],
+        "year": 2017
+      }
+    }
+  ]
+}

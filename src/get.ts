@@ -16,6 +16,7 @@ export type GetArxivParams = {
   readonly id: string
   readonly cache: boolean
   readonly refs: boolean
+  readonly tldr: boolean
   readonly detailed: boolean
   readonly range?: RangeSpec
 }
@@ -24,11 +25,12 @@ export const getArxivPaper = (params: GetArxivParams): Effect.Effect<string, Get
   const dir = cacheDir(params.id)
   const cacheFile = join(dir, "paper.md")
 
+  const fetchPaper = params.tldr ? fetchAndCache : fetchAndCacheWithoutTldr
   const paper = params.cache
     ? readCachedPaper(cacheFile).pipe(
-        Effect.catch(() => fetchAndCache(params.id, dir, cacheFile))
+        Effect.catch(() => fetchPaper(params.id, dir, cacheFile))
       )
-    : fetchAndCache(params.id, dir, cacheFile)
+    : fetchPaper(params.id, dir, cacheFile)
 
   return paper.pipe(
     Effect.flatMap((markdown) => renderMarkdown(markdown, params)),
@@ -44,13 +46,83 @@ const fetchAndCache = (
   ArxivClient.use((arxiv) => arxiv.get(id)).pipe(
     Effect.mapError((error): GetError => ({ _tag: "GetArxivError", error })),
     Effect.zipWith(
-      Ar5ivClient.use((ar5iv) => ar5iv.getHtml(id)).pipe(
-        Effect.mapError((error): GetError => ({ _tag: "GetAr5ivError", error }))
+      Effect.zipWith(
+        Ar5ivClient.use((ar5iv) => ar5iv.getHtml(id)).pipe(
+          Effect.mapError((error): GetError => ({ _tag: "GetAr5ivError", error }))
+        ),
+        fetchTldr(id),
+        (html, tldr) => ({ html, tldr })
       ),
-      (metadata, html) => buildCanonicalMarkdown(metadata, html)
+      (metadata, fetched) => buildCanonicalMarkdown(metadata, fetched.html, fetched.tldr)
     ),
     Effect.flatMap((markdown) => writeCachedPaper(dir, cacheFile, markdown).pipe(Effect.as(markdown)))
   )
+
+const fetchAndCacheWithoutTldr = (
+  id: string,
+  dir: string,
+  cacheFile: string
+): Effect.Effect<string, GetError, ArxivClient | Ar5ivClient> =>
+  ArxivClient.use((arxiv) => arxiv.get(id)).pipe(
+    Effect.mapError((error): GetError => ({ _tag: "GetArxivError", error })),
+    Effect.zipWith(
+      Ar5ivClient.use((ar5iv) => ar5iv.getHtml(id)).pipe(
+        Effect.mapError((error): GetError => ({ _tag: "GetAr5ivError", error }))
+      ),
+      (metadata, html) => buildCanonicalMarkdown(metadata, html, undefined)
+    ),
+    Effect.flatMap((markdown) => writeCachedPaper(dir, cacheFile, markdown).pipe(Effect.as(markdown)))
+  )
+
+const fetchTldr = (id: string): Effect.Effect<string | undefined> => {
+  const fixturePath = process.env.PAPER7_S2_FIXTURE
+  const source: Effect.Effect<string, unknown> = fixturePath === undefined
+    ? requestTldrJson(id)
+    : Effect.tryPromise({
+        try: () => readFile(fixturePath, { encoding: "utf8" }),
+        catch: (cause) => cause,
+      })
+
+  return source.pipe(
+    Effect.flatMap(decodeTldr),
+    Effect.catch(() => Effect.succeed(undefined))
+  )
+}
+
+const requestTldrJson = (id: string): Effect.Effect<string, unknown> => {
+  const url = new URL(`https://api.semanticscholar.org/graph/v1/paper/${encodeURIComponent(s2PaperId(id))}`)
+  url.searchParams.set("fields", "tldr")
+  url.searchParams.set("tool", "paper7")
+
+  return Effect.tryPromise({
+    try: async (signal) => {
+      const response = await fetch(url, { signal })
+      if (!response.ok) throw new Error(`Semantic Scholar HTTP ${response.status}`)
+      return response.text()
+    },
+    catch: (cause) => cause,
+  })
+}
+
+const s2PaperId = (id: string): string => `arXiv:${id}`
+
+const decodeTldr = (json: string): Effect.Effect<string | undefined, unknown> =>
+  Effect.try({
+    try: () => {
+      const parsed: unknown = JSON.parse(json)
+      if (!isRecord(parsed)) return undefined
+      const tldr = parsed.tldr
+      if (!isRecord(tldr)) return undefined
+      const text = tldr.text
+      if (typeof text !== "string") return undefined
+      const normalized = normalizeSummary(text)
+      return normalized === "" ? undefined : normalized
+    },
+    catch: (cause) => cause,
+  })
+
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === "object" && value !== null
 
 const readCachedPaper = (cacheFile: string): Effect.Effect<string, GetError> =>
   Effect.tryPromise({
@@ -69,13 +141,14 @@ const writeCachedPaper = (dir: string, cacheFile: string, markdown: string): Eff
 
 const cacheDir = (id: string): string => join(process.env.HOME ?? ".", ".paper7", "cache", id)
 
-const buildCanonicalMarkdown = (metadata: ArxivPaperMetadata, html: string): string => {
+const buildCanonicalMarkdown = (metadata: ArxivPaperMetadata, html: string, tldr: string | undefined): string => {
   const body = htmlToMarkdown(html)
   return [
     `# ${metadata.title}`,
     "",
     `**Authors:** ${metadata.authors.join(", ")}`,
     `**arXiv:** https://arxiv.org/abs/${metadata.id}`,
+    ...(tldr === undefined ? [] : [`**TLDR:** ${tldr}`]),
     "",
     "---",
     "",
@@ -86,20 +159,146 @@ const buildCanonicalMarkdown = (metadata: ArxivPaperMetadata, html: string): str
 }
 
 const renderMarkdown = (markdown: string, params: GetArxivParams): Effect.Effect<string, GetError> => {
-  const withoutRefs = params.refs ? markdown : stripReferences(markdown)
-  if (!params.detailed) return Effect.succeed(withoutRefs)
-  if (params.range === undefined) return Effect.succeed(withoutRefs)
-  return renderRange(withoutRefs, params.range)
+  const withoutTldr = params.tldr ? markdown : stripTldr(markdown)
+  const view = params.refs ? withoutTldr : stripReferences(withoutTldr)
+  if (!params.detailed) return Effect.succeed(renderCompactOutput(view, params.id))
+  if (params.range === undefined) return Effect.succeed(view)
+  return renderRange(view, params.range)
 }
 
 const renderRange = (markdown: string, range: RangeSpec): Effect.Effect<string, GetError> => {
-  const lines = markdown.split("\n")
+  const lines = renderLines(markdown)
   if (range.start > lines.length) {
     return Effect.fail({ _tag: "GetRangeError", message: `range start ${range.start} exceeds total lines ${lines.length}` })
   }
   const end = Math.min(range.end, lines.length)
-  return Effect.succeed(lines.slice(range.start - 1, end).join("\n"))
+  const title = titleFromMarkdown(markdown)
+  return Effect.succeed([
+    `# ${title} (lines ${range.start}-${end})`,
+    "",
+    `**Range:** ${range.start}-${end} of ${lines.length}`,
+    "",
+    lines.slice(range.start - 1, end).join("\n"),
+  ].join("\n"))
 }
+
+const renderCompactOutput = (markdown: string, id: string): string => {
+  const lines = renderLines(markdown)
+  if (lines.length < 30) return markdown
+
+  const sections = indexSections(lines)
+  if (sections.length === 0) return markdown
+
+  const title = titleFromMarkdown(markdown)
+  const header = compactHeader(lines)
+  const summary = leadParagraph(lines)
+  const output = [`# ${title}`, ""]
+
+  if (header.length > 0) {
+    output.push(...header)
+  }
+
+  if (summary !== "") {
+    output.push("", `**Summary:** ${summary}`)
+  }
+
+  output.push(
+    "",
+    "**Index:**",
+    "| Section | Lines |",
+    "|---------|-------|",
+    ...sections.map((section) => `| ${escapeTableCell(section.title)} | ${section.start}-${section.end} |`),
+    "",
+    `> Fetch lines: \`paper7 get ${id} --detailed --range START:END\``,
+    `> Full paper: \`paper7 get ${id} --detailed\``
+  )
+
+  return output.join("\n")
+}
+
+type IndexedSection = {
+  readonly title: string
+  readonly start: number
+  readonly end: number
+}
+
+const indexSections = (lines: ReadonlyArray<string>): ReadonlyArray<IndexedSection> => {
+  const sections: Array<IndexedSection> = []
+  let current: { readonly title: string; readonly start: number } | undefined
+
+  for (let index = 0; index < lines.length; index += 1) {
+    if (index === 0) continue
+    const title = headingTitle(lines[index] ?? "")
+    if (title !== undefined) {
+      if (current !== undefined) sections.push({ ...current, end: index })
+      current = { title, start: index + 1 }
+    }
+  }
+
+  if (current !== undefined) sections.push({ ...current, end: lines.length })
+  return sections
+}
+
+const renderLines = (markdown: string): ReadonlyArray<string> => {
+  const lines = markdown.split("\n")
+  const lastIndex = lines.length - 1
+  if (lines[lastIndex] === "") return lines.slice(0, lastIndex)
+  return lines
+}
+
+const compactHeader = (lines: ReadonlyArray<string>): ReadonlyArray<string> => {
+  const result: Array<string> = []
+  for (let index = 1; index < lines.length; index += 1) {
+    const line = lines[index] ?? ""
+    if (line === "---") return result
+    if (line.trim() === "" || line.startsWith("**TLDR:**")) continue
+    result.push(line)
+  }
+  return result
+}
+
+const leadParagraph = (lines: ReadonlyArray<string>): string => {
+  let afterRule = false
+  let text = ""
+  for (const line of lines) {
+    if (line === "---") {
+      afterRule = true
+      continue
+    }
+    if (!afterRule) continue
+    if (headingTitle(line) !== undefined) {
+      if (text !== "") break
+      continue
+    }
+    if (line.trim() === "") {
+      if (text !== "") break
+      continue
+    }
+    text = text === "" ? line.trim() : `${text} ${line.trim()}`
+  }
+  return normalizeSummary(text)
+}
+
+const normalizeSummary = (text: string): string => {
+  const normalized = text.replace(/\s+/g, " ").trim()
+  if (normalized.length <= 600) return normalized
+  return `${normalized.slice(0, 597)}...`
+}
+
+const titleFromMarkdown = (markdown: string): string => {
+  const firstLine = markdown.split("\n")[0]
+  if (firstLine === undefined) return "Untitled"
+  const title = firstLine.replace(/^#\s+/, "").trim()
+  return title === "" ? "Untitled" : title
+}
+
+const headingTitle = (line: string): string | undefined => {
+  const match = /^(#{1,3})\s+(.+)$/.exec(line)
+  const title = match?.[2]
+  return title === undefined ? undefined : title
+}
+
+const escapeTableCell = (input: string): string => input.replace(/\|/g, "\\|")
 
 const stripReferences = (markdown: string): string => {
   const lines = markdown.split("\n")
@@ -110,6 +309,9 @@ const stripReferences = (markdown: string): string => {
   }
   return kept.join("\n")
 }
+
+const stripTldr = (markdown: string): string =>
+  markdown.split("\n").filter((line) => !/^\*\*TLDR:\*\*/.test(line)).join("\n")
 
 const wrapUntrusted = (markdown: string, id: string): string =>
   `<untrusted-content source="arxiv" id="${escapeAttribute(id)}">\n${markdown.trimEnd()}\n</untrusted-content>`
