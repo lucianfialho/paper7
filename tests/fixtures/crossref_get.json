@@ -1,0 +1,15 @@
+{
+  "status": "ok",
+  "message": {
+    "DOI": "10.1101/2023.12.15.571821",
+    "title": ["Fixture DOI Paper"],
+    "author": [
+      { "given": "Ada", "family": "Lovelace" },
+      { "given": "Grace", "family": "Hopper" }
+    ],
+    "institution": [{ "name": "bioRxiv" }],
+    "issued": { "date-parts": [[2023, 12, 15]] },
+    "resource": { "primary": { "URL": "https://www.biorxiv.org/content/10.1101/2023.12.15.571821.full" } },
+    "abstract": "<jats:p>DOI fixture abstract first sentence.</jats:p><jats:p>Second abstract paragraph.</jats:p>"
+  }
+}

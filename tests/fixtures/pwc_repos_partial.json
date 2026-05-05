@@ -1,0 +1,13 @@
+{
+  "count": 2,
+  "results": [
+    {
+      "name": "missing-url"
+    },
+    {
+      "url": "https://github.com/example/recovered-repo",
+      "name": "recovered-repo",
+      "is_official": false
+    }
+  ]
+}

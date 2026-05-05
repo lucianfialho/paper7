@@ -1,40 +1,43 @@
 # paper7 tests
 
-Shell-based smoke tests for `paper7` commands. They hit real upstream APIs
-(arXiv, NCBI E-utilities), so network access is required.
+Default test path: `bun run test` runs the deterministic `@effect/vitest` suite. Default tests use fake services, fixtures, `Command.runWith`, and Effect test services; they must not require network access.
 
 ## Run
 
 ```bash
-# Run one test file
-tests/test_pubmed_search.sh
-
-# Run all tests
-for t in tests/test_*.sh; do "$t" || exit $?; done
+bun run test
 ```
 
-Each test script prints colored pass/fail lines and exits non-zero on failure
-(exit code = number of failures).
+Run narrow suites directly with Vitest paths when iterating:
 
-## Conventions
+```bash
+bun run test -- tests/search.test.ts
+```
 
-- Test files are named `test_<feature>.sh`
-- Every script is self-contained and idempotent — no shared state
-- Tests prefer fast, specific queries to minimize upstream load
-- Use `PAPER7` env var to override the CLI path if needed:
-  ```bash
-  PAPER7=/path/to/paper7.sh tests/test_pubmed_search.sh
-  ```
+## Opt-In Checks
 
-## Current coverage
+Live upstream checks are not part of the default suite. Add explicit Vitest suites or ad-hoc local commands for deliberate upstream checks; do not add them to `bun run test` or default CI.
 
-| File | Feature | Issue |
-|---|---|---|
-| `test_pubmed_search.sh` | `paper7 search --source pubmed` | #1 |
-| `test_pubmed_get.sh` | `paper7 get pmid:NNN` + cache/list integration | #2 |
-| `test_readme_docs.sh` | README + llms.txt document multi-source workflow | #3 |
-| `test_browse.sh` | `paper7 browse` pure helpers + guard paths (interactive fzf part is manual) | #7 |
-| `test_s2.sh` | `paper7 refs` + TLDR enrichment in `get` (skips on S2 rate limit) | #9 |
-| `test_doi.sh` | `paper7 get doi:<DOI>` via Crossref + arXiv-DOI auto-redirect | #11 |
-| `test_abstract_only.sh` | `paper7 get <id> --abstract-only` for arXiv/PubMed/DOI | — |
-| `test_cite.sh` | `paper7 cite <id> --format bibtex\|apa\|abnt` + error paths | — |
+## Migration Matrix
+
+| Former shell scenario | Deterministic replacement |
+| --- | --- |
+| CLI skeleton | `tests/cli-skeleton.test.ts` covers root help/version, app-level stdio, and package metadata checks. |
+| Typed CLI boundary | `tests/cli-skeleton.test.ts`, command suites using `Command.runWith`, and domain parser coverage in command tests. |
+| arXiv search | `tests/search.test.ts` uses fake arXiv clients and decode-error fixtures. |
+| PubMed search | `tests/search.test.ts` uses fake PubMed clients and decode-error fixtures. |
+| arXiv get | `tests/get.test.ts` uses fake arXiv, ar5iv, cache, render, and Semantic Scholar services. |
+| PubMed get | `tests/get.test.ts` uses fake PubMed, cache, render, and Semantic Scholar services. |
+| DOI get | `tests/get.test.ts` uses fake Crossref and DOI render coverage. |
+| get modes | `tests/get.test.ts` covers compact, detailed, range, no refs, cache, and TLDR modes. |
+| abstract-only | `tests/get.test.ts` covers arXiv, PubMed, and DOI abstract-only output without full-text fetch. |
+| refs | `tests/refs-repo.test.ts` uses fake Semantic Scholar services and JSON output assertions. |
+| repo | `tests/refs-repo.test.ts` uses fake repository discovery services. |
+| cite | `tests/cite.test.ts` uses fake arXiv, PubMed, and Crossref services for citation output. |
+| cache | `tests/cache.test.ts` uses temporary filesystem coverage for list and clear behavior. |
+| vault | `tests/vault.test.ts` uses temporary filesystem coverage for config and export behavior. |
+| browse | `tests/browse.test.ts` uses test stdin/stdout and fake cache entries. |
+| kb | `tests/kb.test.ts` covers local wiki read, list, status, search, and ingest paths. |
+| README docs | `tests/docs-hardening.test.ts` checks npm/npx install docs and unsafe installer removal. |
+| release hardening | `tests/package-hardening.test.ts` checks publish surface, dependency allowlist, install hooks, and default test command. |
+| Semantic Scholar | `tests/refs-repo.test.ts` and `tests/get.test.ts` cover references, TLDR, rate limits, retries, and typed errors with fake clients. |

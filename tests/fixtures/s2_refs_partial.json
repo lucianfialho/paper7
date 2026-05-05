@@ -1,0 +1,16 @@
+{
+  "data": [
+    {
+      "bad": true
+    },
+    {
+      "citedPaper": {
+        "paperId": "def456",
+        "externalIds": { "DOI": "10.1000/test" },
+        "title": "Enriched Reference",
+        "authors": [{ "name": "Grace Hopper" }],
+        "year": 1952
+      }
+    }
+  ]
+}

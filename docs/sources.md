@@ -7,6 +7,14 @@ Conventions throughout:
 - All HTTP calls send `tool=paper7` as a query parameter (NCBI + Semantic Scholar courtesy).
 - Network failures degrade per-source: search/fetch exit non-zero with a stderr message; metadata enrichment (e.g. TLDR) is best-effort and silent.
 - IDs visible to the user are always **canonical paper7 form**: `YYMM.NNNNN` for arXiv, `pmid:NNNN` for PubMed, `doi:...` or `s2:<paperId>` for Semantic Scholar.
+- The npm CLI parses responses internally in Node; normal operation does not shell out to external tools.
+
+## Upstream assumptions and network behavior
+
+- Upstreams are treated as unavailable by default in CI. Default tests use local fixtures or fake HTTP layers; live API checks stay opt-in and outside default CI.
+- HTTP clients use bounded timeouts and bounded retry loops for transient failures. Invalid user input is rejected before network access.
+- arXiv, PubMed, Crossref, Semantic Scholar, and Papers with Code responses are untrusted external data. Rendered paper bodies are wrapped with trust-boundary markers before reaching agent-facing output.
+- Crossref polite-pool access uses `edu.santos.brito@gmail.com` as the maintainer-owned contact email for npm releases.
 
 ---
 
@@ -24,7 +32,7 @@ Full-text source for physics, computer science, machine learning, math, and quan
 | `https://ar5iv.labs.arxiv.org/html/<id>` | `paper7 get` (full body) | HTML rendering of the arXiv source — paper7 strips tags and emits clean Markdown. Skips PDF parsing entirely. |
 
 ### Response format
-XML (Atom feed). Parsed with `awk` over the `<entry>` blocks.
+XML (Atom feed). Parsed internally by the Node CLI.
 
 ### Rate limits
 arXiv asks for ~3-second delay between bursts; paper7 issues one request per user-issued command, well under the threshold. No formal cap.
@@ -57,7 +65,7 @@ Biomedical, clinical, and pharmacological literature. Activated via `paper7 sear
 | `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=<id>&rettype=abstract&retmode=xml` | `paper7 get pmid:NNNN` | Returns full PubmedArticle XML — paper7 extracts title, authors, journal, publication date, DOI, and abstract. |
 
 ### Response format
-XML across all three endpoints. Parsed with `grep`/`sed`/`awk` (no `xmllint` dependency).
+XML across all three endpoints. Parsed internally by the Node CLI.
 
 ### Rate limits
 - Without API key: 3 requests/second/IP
@@ -70,7 +78,7 @@ Optional. paper7 does not currently surface API key support; could be added via 
 ### Known gaps
 - **Abstracts only.** Full text lives on PMC (PubMed Central) and is a separate pipeline not yet implemented. `paper7 get pmid:NNNN` returns metadata + abstract; users wanting full text must fetch from PMC or the publisher.
 - `--no-refs` flag is a no-op for PubMed papers (abstracts have no References section).
-- `paper7 vault` rejects PMIDs today — vault export for PubMed papers is deferred to a future issue once PMID-specific frontmatter is designed.
+- `paper7 vault` exports cached PubMed abstracts with PMID-safe filenames and shared paper frontmatter.
 - PubDate normalization: prefers `<Year><Month><Day>` form, falls back to `<MedlineDate>` raw string when only a season/range is published (e.g. `"2025 Jul-Aug"`).
 
 ### Upstream docs
@@ -94,7 +102,7 @@ Metadata-layer source. **Not** a full-paper fetcher — paper7 uses S2 for the c
 `{externalId}` accepts `arXiv:NNNN`, `PMID:NNNN`, `DOI:...`, or the raw S2 paperId (40-char hex).
 
 ### Response format
-JSON. Requires `jq` for parsing — paper7 fails fast with an install hint if `jq` is missing on a S2-using command. (Same tradeoff as `fzf` for `paper7 browse`.)
+JSON. Parsed internally by the Node CLI; no external JSON parser is required for normal operation.
 
 ### Rate limits
 - Without API key: ~100 requests / 5 minutes per IP. **Easy to hit when running tests in a tight loop.**
@@ -108,7 +116,7 @@ Optional. Currently no env var hookup; planned as a follow-up issue if rate limi
 - **Best-effort enrichment.** TLDR coverage is ~80% of papers; `paper7 get` does not flag when S2 has no TLDR vs when S2 was unreachable — both render the same (no `**TLDR:**` line). Users wanting determinism can pass `--no-tldr`.
 - TLDR is cached in `meta.json` and `paper.md` only on **fresh fetches** (cache miss). Already-cached papers from before this feature won't get a TLDR until the user runs `paper7 get <id> --no-cache`. There is no lazy backfill.
 - `paper7 cites <id>` (reverse direction — papers citing this one) is not yet implemented; it is a planned follow-up.
-- `paper7 vault` does not yet consume S2 refs — it still extracts wikilinks from the body via regex. Refactoring the vault export to use S2 refs is a separate planned issue.
+- `paper7 vault` does not yet consume S2 refs — it still extracts wikilinks from the body via regex. Vault exports cached arXiv, PubMed, and DOI papers; refactoring the export to use S2 refs is a separate planned issue.
 - Search via S2 (`/paper/search`) is not implemented; arXiv and PubMed search cover the use cases today.
 
 ### Upstream docs
@@ -127,22 +135,23 @@ Universal DOI resolver. paper7 uses Crossref to fetch metadata + abstract for an
 
 | Endpoint | Used for | Notes |
 |---|---|---|
-| `https://api.crossref.org/works/{DOI}?mailto=paper7@example.com` | `paper7 get doi:<DOI>` | Returns metadata: `title`, `author[]`, `institution`, `publisher`, `issued`, `URL`, `resource.primary.URL`, and `abstract` (when present, wrapped in JATS XML). |
+| `https://api.crossref.org/works/{DOI}?mailto=<maintainer-email>` | `paper7 get doi:<DOI>` | Returns metadata: `title`, `author[]`, `institution`, `publisher`, `issued`, `URL`, `resource.primary.URL`, and `abstract` (when present, wrapped in JATS XML). |
 
-The `mailto` query param puts paper7 into Crossref's "polite pool" — recommended courtesy that gets faster, more reliable responses than the default pool.
+The `mailto` query param puts paper7 into Crossref's "polite pool" — recommended courtesy that gets faster, more reliable responses than the default pool. The email must be a maintainer-owned contact before publishing.
 
 ### Response format
-JSON. Parsed with `jq`. paper7 reuses the same `s2_check_jq` guard already in place for Semantic Scholar — `jq` becomes a hard dep for any `paper7 get doi:` invocation.
+JSON. Parsed internally by the Node CLI; no external JSON parser is required for normal operation.
 
 ### Rate limits
 Generous — Crossref's polite pool has no published hard cap; their etiquette guide asks ~50 requests/sec/IP as a soft ceiling. paper7 makes one `GET` per `paper7 get doi:` invocation, well within safe usage.
 
 ### Auth
-None required. No API key. The hardcoded `mailto` in `paper7.sh` (`paper7@example.com`) is acceptable for the polite pool — Crossref doesn't validate the email, just records it for accountability if abuse patterns emerge.
+None required. No API key. A real maintainer-owned polite-pool email is required before npm publication so Crossref has an accountable contact.
 
 ### Known gaps
 - Abstracts come wrapped in JATS XML (`<jats:p>`, `<jats:italic>`, etc.). paper7 strips the tags but the formatting can be uneven across publishers.
 - Crossref doesn't host full text — `paper7 get doi:` always returns metadata + abstract only. The Markdown header includes a `**Full text:**` link to the publisher/preprint server.
+- `paper7 vault` exports cached DOI records with DOI-safe filenames and shared paper frontmatter.
 - Some journal DOIs have no abstract in Crossref (publisher didn't deposit it). paper7 emits a placeholder `(no abstract available; full text at <URL>)`.
 - DOI URL form (`https://doi.org/...`) is not yet accepted as input — only the bare `doi:10.XXXX/...` prefix.
 
@@ -177,7 +186,7 @@ N/A.
 N/A.
 
 ### Known gaps
-- **bioRxiv/medRxiv block direct programmatic HTTP access.** Their HTML pages return HTTP 403 to `curl` requests regardless of `User-Agent` (Cloudflare with a JavaScript challenge). The original plan to fetch full text from `biorxiv.org/content/{DOI}.full` and convert it to Markdown was dropped — pure-bash + `curl` cannot pass the challenge. paper7 returns abstract-only via Crossref instead, with a `**Full text:**` link the user opens in a browser when needed.
+- **bioRxiv/medRxiv block direct programmatic HTTP access.** Their HTML pages return HTTP 403 to non-browser requests regardless of `User-Agent` (Cloudflare with a JavaScript challenge). paper7 returns abstract-only via Crossref instead, with a `**Full text:**` link the user opens in a browser when needed.
 - bioRxiv has its own JSON API at `https://api.biorxiv.org/details/biorxiv/{DOI}` — useful for date-range listings but doesn't provide full text either, and Crossref already covers metadata. paper7 doesn't currently call it.
 - bioRxiv has **no public keyword-search API**. For biomed search, use `paper7 search --source pubmed` (which covers ~all peer-reviewed biomed plus a growing share of preprints once they're indexed in PubMed).
 
@@ -191,9 +200,9 @@ N/A.
 
 Use this template for the next source (bioRxiv, OpenAlex, etc.):
 
-1. Add a constant to `paper7.sh` near the existing API URL block.
-2. Add a `parse_<source>_id` and `is_<source>_input` helper if the source uses a new ID shape.
-3. Add `cmd_<existing>_<source>` functions (one per dispatched command — search/get/refs as applicable). Keep arXiv and PubMed paths byte-identical for regression safety.
+1. Add a source module under `src/` for endpoint access and response decoding.
+2. Extend the typed CLI/parser boundary if the source uses a new command, flag, or ID shape.
+3. Wire the source into the relevant command path — search/get/refs as applicable. Keep existing arXiv, PubMed, and DOI behavior byte-identical for regression safety.
 4. Add a section to this file with the same headings (Purpose, Endpoints used, Response format, Rate limits, Auth, Known gaps, Upstream docs).
-5. Add a `tests/test_<source>.sh` smoke suite. Detect rate-limit (429) and skip rather than fail.
+5. Add deterministic `@effect/vitest` coverage with fixtures or fake HTTP layers. Keep live upstream checks opt-in and outside default CI.
 6. Update `README.md` Usage and CLI reference blocks; update `llms.txt` if the source affects LLM-agent behavior.

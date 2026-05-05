@@ -6,12 +6,12 @@ Real output files from 5 landmark papers, comparing paper7's clean Markdown agai
 
 | Paper | Pages | PDF | HTML (ar5iv) | paper7 | vs PDF | vs HTML |
 |-------|------:|----:|-----------:|-------:|-------:|--------:|
-| Attention Is All You Need | 15 | 2,215KB | 352KB | 42KB | **-98%** | **-88%** |
-| RAG | 12 | 885KB | 309KB | 70KB | **-92%** | **-77%** |
-| Mixtral of Experts | 16 | 2,476KB | 222KB | 32KB | **-99%** | **-85%** |
-| GPT-4 Technical Report | 100 | 5,246KB | 650KB | 119KB | **-98%** | **-82%** |
-| LoRA | 26 | 1,610KB | 1,049KB | 94KB | **-94%** | **-91%** |
-| **Total** | **169** | **12,432KB** | **2,582KB** | **358KB** | **-97%** | **-86%** |
+| Attention Is All You Need | 15 | 2,163KB | 343KB | 40KB | **-98%** | **-88%** |
+| RAG | 12 | 864KB | 301KB | 68KB | **-92%** | **-77%** |
+| Mixtral of Experts | 16 | 2,417KB | 216KB | 31KB | **-98%** | **-85%** |
+| GPT-4 Technical Report | 100 | 5,122KB | 635KB | 116KB | **-97%** | **-81%** |
+| LoRA | 26 | 1,571KB | 1,024KB | 91KB | **-94%** | **-91%** |
+| **Total** | **169** | **12,140KB** | **2,522KB** | **349KB** | **-97%** | **-86%** |
 
 ## What's compared
 
@@ -36,8 +36,14 @@ Each folder contains `paper7.md` — the clean Markdown output:
 ## How to reproduce
 
 ```bash
-# Run the benchmark script
-./benchmark/run.sh
+# Run the deterministic benchmark command
+bun run benchmark
+
+# Refresh upstream-derived artifacts and re-run benchmark (live mode)
+bun run benchmark:live
+
+# Run startup and cached-get performance benchmark (requires built dist/)
+bun run benchmark:cli
 
 # Or manually for a single paper
 paper7 get <arxiv-id> > benchmark/<folder>/paper7.md
@@ -47,4 +53,4 @@ paper7 get <arxiv-id> > benchmark/<folder>/paper7.md
 
 - PDFs and HTML are not included in the repo (too large)
 - The bigger the paper, the bigger the savings
-- Run `benchmark/run.sh` to regenerate all numbers
+- Live refresh hits arXiv/ar5iv and rewrites `benchmark/*/paper7.md` plus `benchmark/manifest.json`

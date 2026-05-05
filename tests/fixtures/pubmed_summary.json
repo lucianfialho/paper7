@@ -1,0 +1,22 @@
+{
+  "result": {
+    "uids": ["38903003", "38600001"],
+    "38903003": {
+      "uid": "38903003",
+      "title": "Test PubMed Search Paper",
+      "pubdate": "2024 Jun 18",
+      "authors": [
+        { "name": "Ada Lovelace" },
+        { "name": "Grace Hopper" }
+      ]
+    },
+    "38600001": {
+      "uid": "38600001",
+      "title": "Another PubMed Result",
+      "pubdate": "2023 Dec",
+      "authors": [
+        { "name": "Katherine Johnson" }
+      ]
+    }
+  }
+}

@@ -1,0 +1,42 @@
+[
+  {
+    "name": "Attention Is All You Need",
+    "arxivId": "1706.03762",
+    "pages": 15,
+    "pdfBytes": 2215244,
+    "htmlBytes": 351902,
+    "paper7Path": "attention/paper7.md"
+  },
+  {
+    "name": "RAG",
+    "arxivId": "2005.11401",
+    "pages": 12,
+    "pdfBytes": 885323,
+    "htmlBytes": 308769,
+    "paper7Path": "rag/paper7.md"
+  },
+  {
+    "name": "Mixtral of Experts",
+    "arxivId": "2401.04088",
+    "pages": 16,
+    "pdfBytes": 2475990,
+    "htmlBytes": 222127,
+    "paper7Path": "mixtral/paper7.md"
+  },
+  {
+    "name": "GPT-4 Technical Report",
+    "arxivId": "2303.08774",
+    "pages": 100,
+    "pdfBytes": 5245564,
+    "htmlBytes": 650375,
+    "paper7Path": "gpt4/paper7.md"
+  },
+  {
+    "name": "LoRA",
+    "arxivId": "2106.09685",
+    "pages": 26,
+    "pdfBytes": 1609513,
+    "htmlBytes": 1049392,
+    "paper7Path": "lora/paper7.md"
+  }
+]

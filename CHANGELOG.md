@@ -5,55 +5,26 @@ All notable changes to paper7 are documented here.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com).
 Pre-1.0, minor versions may add features; breaking changes (if any) are called out explicitly.
 
-## [0.6.0] — 2026-04-25
-
-Deep research as a skill: `paper7-ask` orchestrates search → triage → read → synthesize → cite, with file-back into the local KB.
+## [0.6.0-beta.0] - 2026-04-28
 
 ### Added
 
-- `paper7 cite <id> --format <bibtex|apa|abnt>` — formatted bibliographic citations from Crossref / arXiv / PubMed metadata.
-- `paper7 get <id> --abstract-only` — lightweight metadata + abstract output (~200 tokens) for cheap triage. Skips full-text fetch.
-- `skills/paper7-ask/SKILL.md` — new skill that drives the deep-research pipeline using paper7 primitives, with hard gate against fabricated citations and file-back into `paper7 kb`.
-
-## [0.5.1] — 2026-04-25
-
-Fixes hierarchical section ranges in the compact header.
-
-### Fixed
-
-- **Section ranges now cover full blocks, not just heading lines.** The index parser was flat — `Experiments | 82-83` showed only the heading row. A stack-based awk parser now computes each section's range as the span of all its descendants, so `Experiments` correctly becomes `[Experiments](#L82-L115)`. Agents fetching that range now receive the full section content.
-- Spurious H1 lines (e.g. LoRA's `# of Trainable Parameters = 18M…` table caption) are now dropped from the index.
+- Ported `paper7 get <id> --abstract-only` to the Effect CLI for arXiv, PubMed, and DOI metadata triage.
+- Ported `paper7 cite <id> --format <bibtex|apa|abnt>` to the Effect CLI.
+- Ported `paper7 kb` local wiki commands to the Effect CLI.
 
 ### Changed
 
-- Index format changed from a Markdown table to a nested bullet list (`- [Title](#Lstart-Lend)`) with 2-space indentation per nesting level. Smaller output; hierarchy is visually explicit.
+- Rewrote paper7 as the `@p7dotorg/paper7` TypeScript npm CLI.
+- Switched command parsing and routing to `effect/unstable/cli`.
+- Replaced legacy shell smoke coverage with deterministic `@effect/vitest` suites.
+- Removed the legacy shell implementation and retained shell smoke scripts.
+- Preserved prompt-injection boundaries with `<untrusted-content>` wrappers around fetched paper output.
 
-## [0.5.0] — 2026-04-24
+### Security
 
-LLM Wiki knowledge base + prompt injection boundary markers.
-
-### Added
-
-- **`paper7 kb`** — LLM Wiki pattern (Karpathy): paper7 fetches and stores; the agent synthesizes and maintains wiki pages. Zero dependencies, agent-agnostic (Claude Code, Codex, OpenCode).
-  - `kb ingest <id>` — fetches paper to `~/.paper7/wiki/sources/` and prints content for the agent to read
-  - `kb write <slug>` — agent pipes synthesized wiki page to stdin; stored in `~/.paper7/wiki/pages/`
-  - `kb read <slug|index|log>` — prints a wiki page, the index catalog, or the history log
-  - `kb search <pattern>` — grep over agent-written wiki pages
-  - `kb list` — lists pages and sources with titles
-  - `kb status` — shows file counts and wiki paths
-- **Prompt injection boundary markers** — all `paper7 get` output is now wrapped in `<paper id="…">` … `</paper>` tags so agents can distinguish fetched paper content from system instructions.
-- `examples/research-kb/` rewritten in LLM Wiki format: `sources/`, `pages/`, `index.md`, `log.md` with three real synthesized wiki pages on PDF parsing research.
-
-### Removed
-
-- `claude-code/` directory (superseded by `skills/`)
-- `examples/clinical-research-kb/` (redundant with research-kb)
-- Old flat `kb_*.md` files in `examples/research-kb/` (replaced by wiki layout)
-
-### Changed
-
-- `skills/paper7/SKILL.md` — added Security section documenting the `<paper>` boundary and the LLM Wiki workflow
-- README updated with `kb` commands, boundary marker docs, and LLM Wiki pattern reference
+- Removed remote shell installer path from docs and package surface.
+- Kept npm package install-time hooks empty and runtime dependencies limited to Effect packages.
 
 ## [0.4.0] — 2026-04-18
 
@@ -176,6 +147,7 @@ Initial release.
 - Claude Code slash command + skills.sh package (paper7, paper7-research)
 - Benchmark: 97% smaller than PDF, 86% smaller than raw HTML across 5 landmark papers
 
+[0.6.0-beta.0]: https://github.com/lucianfialho/paper7/compare/v0.4.0...HEAD
 [0.4.0]: https://github.com/lucianfialho/paper7/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/lucianfialho/paper7/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/lucianfialho/paper7/compare/v0.2.0...v0.2.1
