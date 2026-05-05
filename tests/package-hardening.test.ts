@@ -25,7 +25,7 @@ describe("package hardening", () => {
     const pkg = record(packageJson)
 
     expect(pkg.name).toBe("@p7dotorg/paper7")
-    expect(pkg.version).toBe("0.6.0-beta.0")
+    expect(pkg.version).toBe("0.6.0")
     expect(pkg.type).toBe("module")
   })
 

@@ -5,7 +5,7 @@ All notable changes to paper7 are documented here.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com).
 Pre-1.0, minor versions may add features; breaking changes (if any) are called out explicitly.
 
-## [0.6.0-beta.0] - 2026-04-28
+## [0.6.0] - 2026-04-28
 
 ### Added
 
@@ -147,7 +147,7 @@ Initial release.
 - Claude Code slash command + skills.sh package (paper7, paper7-research)
 - Benchmark: 97% smaller than PDF, 86% smaller than raw HTML across 5 landmark papers
 
-[0.6.0-beta.0]: https://github.com/lucianfialho/paper7/compare/v0.4.0...HEAD
+[0.6.0]: https://github.com/lucianfialho/paper7/compare/v0.4.0...v0.6.0
 [0.4.0]: https://github.com/lucianfialho/paper7/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/lucianfialho/paper7/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/lucianfialho/paper7/compare/v0.2.0...v0.2.1

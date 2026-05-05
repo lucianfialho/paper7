@@ -2,7 +2,7 @@
 
 import { Console, Data, Effect, Option, Stdio } from "effect"
 import { NodeRuntime, NodeServices } from "@effect/platform-node"
-import { pathToFileURL } from "node:url"
+
 import { Argument, CliError, CliOutput, Command, Flag, GlobalFlag } from "effect/unstable/cli"
 import { Ar5ivClient, Ar5ivLive, type Ar5ivError } from "./ar5iv.js"
 import { ArxivClient, ArxivLive, type ArxivError } from "./arxiv.js"
@@ -21,7 +21,7 @@ import { SemanticScholarClient, SemanticScholarLive, type SemanticScholarError }
 import { VaultPaths, VaultPathsLive, type VaultError } from "./vault.js"
 import type { BrowseError } from "./browse.js"
 
-export const VERSION = "0.6.0-beta.0"
+export const VERSION = "0.6.0"
 
 const DEFAULT_MAX = 10
 const SOURCE_CHOICES: ReadonlyArray<"arxiv" | "pubmed"> = ["arxiv", "pubmed"]
@@ -719,7 +719,4 @@ export const main = Command.run(rootCommand, { version: VERSION }).pipe(
   Effect.provide(NodeServices.layer)
 )
 
-const entrypoint = process.argv[1]
-if (entrypoint !== undefined && import.meta.url === pathToFileURL(entrypoint).href) {
-  NodeRuntime.runMain(main, { disableErrorReporting: true })
-}
+NodeRuntime.runMain(main, { disableErrorReporting: true })
