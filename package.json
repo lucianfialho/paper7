@@ -1,6 +1,6 @@
 {
   "name": "@p7dotorg/paper7",
-  "version": "0.6.0-beta.0",
+  "version": "0.6.0",
   "description": "arXiv papers as clean context for LLMs",
   "type": "module",
   "main": "dist/cli.js",

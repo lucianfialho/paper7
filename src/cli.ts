@@ -21,7 +21,7 @@ import { SemanticScholarClient, SemanticScholarLive, type SemanticScholarError }
 import { VaultPaths, VaultPathsLive, type VaultError } from "./vault.js"
 import type { BrowseError } from "./browse.js"
 
-export const VERSION = "0.6.0-beta.0"
+export const VERSION = "0.6.0"
 
 const DEFAULT_MAX = 10
 const SOURCE_CHOICES: ReadonlyArray<"arxiv" | "pubmed"> = ["arxiv", "pubmed"]
