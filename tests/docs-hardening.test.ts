@@ -93,28 +93,14 @@ describe("docs hardening", () => {
   })
 
   it("documents benchmark via package command, not shell runner", () => {
-    const readme = readText("README.md")
     const benchmarkReadme = readText("benchmark/README.md")
 
-    expect(readme).toContain("bun run benchmark")
     expect(benchmarkReadme).toContain("bun run benchmark")
-    expect(readme).toContain("bun run benchmark:live")
     expect(benchmarkReadme).toContain("bun run benchmark:live")
-    expect(readme).not.toContain("benchmark/run.sh")
     expect(benchmarkReadme).not.toContain("benchmark/run.sh")
-    expect(readme).not.toContain("./benchmark/run.sh")
     expect(benchmarkReadme).not.toContain("./benchmark/run.sh")
-    expect(readme).not.toMatch(/run_benchmark|run-benchmark|benchmark\.sh/)
     expect(benchmarkReadme).not.toMatch(/run_benchmark|run-benchmark|benchmark\.sh/)
   })
-
-  it.effect("README benchmark table matches deterministic output", () =>
-    Effect.gen(function* () {
-      const report = yield* getBenchmarkReport()
-      const expectedRows = renderBenchmarkMarkdownTable(report, { boldPercentages: false })
-      const readme = readText("README.md")
-      expect(readme).toContain(expectedRows)
-    }))
 
   it.effect("benchmark/README.md benchmark table matches deterministic output", () =>
     Effect.gen(function* () {
