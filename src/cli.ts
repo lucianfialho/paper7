@@ -2,7 +2,7 @@
 
 import { Console, Data, Effect, Option, Stdio } from "effect"
 import { NodeRuntime, NodeServices } from "@effect/platform-node"
-import { pathToFileURL } from "node:url"
+
 import { Argument, CliError, CliOutput, Command, Flag, GlobalFlag } from "effect/unstable/cli"
 import { Ar5ivClient, Ar5ivLive, type Ar5ivError } from "./ar5iv.js"
 import { ArxivClient, ArxivLive, type ArxivError } from "./arxiv.js"
@@ -719,7 +719,4 @@ export const main = Command.run(rootCommand, { version: VERSION }).pipe(
   Effect.provide(NodeServices.layer)
 )
 
-const entrypoint = process.argv[1]
-if (entrypoint !== undefined && import.meta.url === pathToFileURL(entrypoint).href) {
-  NodeRuntime.runMain(main, { disableErrorReporting: true })
-}
+NodeRuntime.runMain(main, { disableErrorReporting: true })
