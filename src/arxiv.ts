@@ -2,9 +2,10 @@ import { Context, Data, Effect, Layer } from "effect"
 import type { Input as DurationInput } from "effect/Duration"
 import { readFile } from "node:fs/promises"
 import type { SearchSort } from "./parser.js"
+import { resolveTimeoutMs, timeoutHint } from "./timeouts.js"
 
 const ARXIV_API_URL = "https://export.arxiv.org/api/query"
-const DEFAULT_TIMEOUT_MS = 5_000
+const DEFAULT_TIMEOUT_MS = 20_000
 const DEFAULT_RETRIES = 2
 const DEFAULT_RETRY_DELAY: DurationInput = "150 millis"
 
@@ -80,7 +81,7 @@ type ArxivClientOptions = {
 export const makeArxivClient = (options: ArxivClientOptions = {}): ArxivClientShape => {
   const apiUrl = options.apiUrl ?? ARXIV_API_URL
   const fetchImpl = options.fetchImpl ?? fetch
-  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
+  const timeoutMs = options.timeoutMs ?? resolveTimeoutMs(DEFAULT_TIMEOUT_MS)
   const retries = options.retries ?? DEFAULT_RETRIES
   const retryDelay = options.retryDelay ?? DEFAULT_RETRY_DELAY
 
@@ -166,7 +167,7 @@ const requestFeed = (input: {
   const request: Effect.Effect<Response, ArxivError> = Effect.tryPromise({
     try: (signal) => fetchWithTimeout(input.fetchImpl, url, signal, input.timeoutMs),
     catch: (cause): ArxivError => isAbortError(cause)
-      ? new ArxivTimeoutError({ message: `arXiv request timed out after ${input.timeoutMs}ms` })
+      ? new ArxivTimeoutError({ message: `arXiv request timed out after ${input.timeoutMs}ms\n${timeoutHint}` })
       : new ArxivTransientError({ message: "arXiv request failed", cause }),
   })
 
@@ -206,7 +207,7 @@ const requestGetFeed = (input: {
   const request: Effect.Effect<Response, ArxivError> = Effect.tryPromise({
     try: (signal) => fetchWithTimeout(input.fetchImpl, url, signal, input.timeoutMs),
     catch: (cause): ArxivError => isAbortError(cause)
-      ? new ArxivTimeoutError({ message: `arXiv request timed out after ${input.timeoutMs}ms` })
+      ? new ArxivTimeoutError({ message: `arXiv request timed out after ${input.timeoutMs}ms\n${timeoutHint}` })
       : new ArxivTransientError({ message: "arXiv request failed", cause }),
   })
 

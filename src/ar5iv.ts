@@ -1,9 +1,10 @@
 import { Context, Data, Effect, Layer } from "effect"
 import type { Input as DurationInput } from "effect/Duration"
 import { readFile } from "node:fs/promises"
+import { resolveTimeoutMs, timeoutHint } from "./timeouts.js"
 
 const AR5IV_URL = "https://ar5iv.labs.arxiv.org/html"
-const DEFAULT_TIMEOUT_MS = 5_000
+const DEFAULT_TIMEOUT_MS = 20_000
 const DEFAULT_RETRIES = 2
 const DEFAULT_RETRY_DELAY: DurationInput = "150 millis"
 
@@ -55,7 +56,7 @@ type Ar5ivClientOptions = {
 export const makeAr5ivClient = (options: Ar5ivClientOptions = {}): Ar5ivClientShape => {
   const baseUrl = options.baseUrl ?? AR5IV_URL
   const fetchImpl = options.fetchImpl ?? fetch
-  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
+  const timeoutMs = options.timeoutMs ?? resolveTimeoutMs(DEFAULT_TIMEOUT_MS)
   const retries = options.retries ?? DEFAULT_RETRIES
   const retryDelay = options.retryDelay ?? DEFAULT_RETRY_DELAY
 
@@ -87,7 +88,7 @@ const requestHtml = (input: {
   const request: Effect.Effect<Response, Ar5ivError> = Effect.tryPromise({
     try: (signal) => fetchWithTimeout(input.fetchImpl, input.url, signal, input.timeoutMs),
     catch: (cause): Ar5ivError => isAbortError(cause)
-      ? new Ar5ivTimeoutError({ message: `ar5iv request timed out after ${input.timeoutMs}ms` })
+      ? new Ar5ivTimeoutError({ message: `ar5iv request timed out after ${input.timeoutMs}ms\n${timeoutHint}` })
       : new Ar5ivTransientError({ message: "ar5iv request failed", cause }),
   })
 

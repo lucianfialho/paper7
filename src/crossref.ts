@@ -1,9 +1,10 @@
 import { Context, Data, Effect, Layer } from "effect"
 import type { Input as DurationInput } from "effect/Duration"
 import { readFile } from "node:fs/promises"
+import { resolveTimeoutMs, timeoutHint } from "./timeouts.js"
 
 const CROSSREF_URL = "https://api.crossref.org/works"
-const DEFAULT_TIMEOUT_MS = 5_000
+const DEFAULT_TIMEOUT_MS = 20_000
 const DEFAULT_RETRIES = 2
 const DEFAULT_RETRY_DELAY: DurationInput = "150 millis"
 
@@ -68,7 +69,7 @@ type CrossrefClientOptions = {
 export const makeCrossrefClient = (options: CrossrefClientOptions = {}): CrossrefClientShape => {
   const apiUrl = options.apiUrl ?? CROSSREF_URL
   const fetchImpl = options.fetchImpl ?? fetch
-  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
+  const timeoutMs = options.timeoutMs ?? resolveTimeoutMs(DEFAULT_TIMEOUT_MS)
   const retries = options.retries ?? DEFAULT_RETRIES
   const retryDelay = options.retryDelay ?? DEFAULT_RETRY_DELAY
 
@@ -134,7 +135,7 @@ const requestJson = (input: {
   const request: Effect.Effect<Response, CrossrefError> = Effect.tryPromise({
     try: (signal) => fetchWithTimeout(input.fetchImpl, input.url, signal, input.timeoutMs),
     catch: (cause): CrossrefError => isAbortError(cause)
-      ? new CrossrefTimeoutError({ message: `Crossref request timed out after ${input.timeoutMs}ms` })
+      ? new CrossrefTimeoutError({ message: `Crossref request timed out after ${input.timeoutMs}ms\n${timeoutHint}` })
       : new CrossrefTransientError({ message: "Crossref request failed", cause }),
   })
 
