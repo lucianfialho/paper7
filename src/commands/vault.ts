@@ -1,6 +1,6 @@
 import { Console, Effect } from "effect"
 import { CachePaths } from "../cache.js"
-import { exportAllPapersToVault, exportPaperToVault, initVault, type VaultError, type VaultInitResult, type VaultExportResult, type VaultExportAllResult, VaultPaths } from "../vault.js"
+import { exportAllPapersToVault, exportPaperToVault, initVault, type VaultError, VaultExportAllFailed, type VaultInitResult, type VaultExportResult, type VaultExportAllResult, VaultPaths } from "../vault.js"
 import type { CliCommand } from "../parser.js"
 
 export const runVaultCommand = (
@@ -21,6 +21,9 @@ export const runVaultCommand = (
       case "vault-all": {
         const result = yield* exportAllPapersToVault()
         yield* Console.log(renderVaultExportAll(result))
+        if (result.exported.length === 0 && result.total > 0) {
+          return yield* Effect.fail(new VaultExportAllFailed({ message: "all cache entries failed to export" }))
+        }
         return
       }
     }
@@ -30,6 +33,14 @@ const renderVaultInit = (result: VaultInitResult): string => `Configured vault: 
 
 const renderVaultExport = (result: VaultExportResult): string => `Exported ${result.id} to ${result.path}`
 
-const renderVaultExportAll = (result: VaultExportAllResult): string => `Exported ${result.count} papers to ${result.path}`
+const renderVaultExportAll = (result: VaultExportAllResult): string => {
+  const header = `Exported ${result.exported.length} of ${result.total} papers to ${result.path}`
+  if (result.failed.length === 0) return header
+  return [
+    header,
+    "Skipped:",
+    ...result.failed.map((entry) => `  ${entry.id} — ${entry.reason}`),
+  ].join("\n")
+}
 
 

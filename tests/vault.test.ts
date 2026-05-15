@@ -97,6 +97,24 @@ const writeEntry = (
     await writeFile(join(dir, "paper.md"), markdown, { encoding: "utf8" })
   })
 
+const writeStaleEntry = (
+  cacheRoot: string,
+  dirname: string,
+  meta: { readonly id: string; readonly title: string }
+) =>
+  Effect.promise(async () => {
+    const dir = join(cacheRoot, dirname)
+    await mkdir(dir, { recursive: true })
+    await writeFile(join(dir, "meta.json"), JSON.stringify(meta), { encoding: "utf8" })
+  })
+
+const writeConfiguredVault = (paths: { readonly configPath: string; readonly vaultPath: string }) =>
+  Effect.promise(async () => {
+    await mkdir(paths.vaultPath, { recursive: true })
+    await mkdir(join(paths.configPath, ".."), { recursive: true })
+    await writeFile(paths.configPath, `PAPER7_VAULT=${paths.vaultPath}\n`, { encoding: "utf8" })
+  })
+
 describe("vault commands", () => {
   it.effect("initializes vault config through Effect CLI", () =>
     withTempVault((paths) => Effect.gen(function*() {
@@ -188,11 +206,7 @@ describe("vault commands", () => {
 
   it.effect("exports all cached papers with path-safe filenames", () =>
     withTempVault((paths) => Effect.gen(function*() {
-      yield* Effect.promise(async () => {
-        await mkdir(paths.vaultPath, { recursive: true })
-        await mkdir(join(paths.configPath, ".."), { recursive: true })
-        await writeFile(paths.configPath, `PAPER7_VAULT=${paths.vaultPath}\n`, { encoding: "utf8" })
-      })
+      yield* writeConfiguredVault(paths)
       yield* writeEntry(paths.cacheRoot, "2401.04088", { id: "2401.04088", title: "Fixture Get Paper" }, "# Fixture Get Paper\n")
       yield* writeEntry(paths.cacheRoot, "pmid-38903003", { id: "pmid:38903003", title: "Fixture PubMed Paper" }, "# Fixture PubMed Paper\n")
       yield* writeEntry(paths.cacheRoot, "doi-10.1101_2023.12.15.571821", { id: "doi:10.1101/2023.12.15.571821", title: "Unsafe / DOI: Paper" }, "# Unsafe / DOI: Paper\n")
@@ -204,9 +218,57 @@ describe("vault commands", () => {
 
       expect(result.exit._tag).toBe("Success")
       expect(result.stderr).toBe("")
-      expect(result.stdout).toBe(`Exported 3 papers to ${paths.vaultPath}`)
+      expect(result.stdout).toBe(`Exported 3 of 3 papers to ${paths.vaultPath}`)
       expect(arxiv).toContain("# Fixture Get Paper")
       expect(pubmed).toContain("# Fixture PubMed Paper")
       expect(doi).toContain("# Unsafe / DOI: Paper")
+    })))
+
+  it.effect("vault all skips stale cache entries and exports the rest (issue #19)", () =>
+    withTempVault((paths) => Effect.gen(function*() {
+      yield* writeConfiguredVault(paths)
+      yield* writeEntry(paths.cacheRoot, "2401.04088", { id: "2401.04088", title: "Good Paper One" }, "# Good Paper One\n")
+      yield* writeStaleEntry(paths.cacheRoot, "2402.99999", { id: "2402.99999", title: "Stale Paper" })
+      yield* writeEntry(paths.cacheRoot, "2403.04088", { id: "2403.04088", title: "Good Paper Two" }, "# Good Paper Two\n")
+
+      const result = yield* runRootWith(paths.cacheRoot, paths.configPath, ["vault", "all"])
+      const first = yield* Effect.promise(() => readFile(join(paths.vaultPath, "2401.04088.md"), { encoding: "utf8" }))
+      const third = yield* Effect.promise(() => readFile(join(paths.vaultPath, "2403.04088.md"), { encoding: "utf8" }))
+
+      expect(result.exit._tag).toBe("Success")
+      expect(result.stderr).toBe("")
+      expect(result.stdout).toContain(`Exported 2 of 3 papers to ${paths.vaultPath}`)
+      expect(result.stdout).toContain("Skipped:")
+      expect(result.stdout).toContain("2402.99999")
+      expect(result.stdout).toContain("no cached paper for 2402.99999")
+      expect(first).toContain("# Good Paper One")
+      expect(third).toContain("# Good Paper Two")
+    })))
+
+  it.effect("vault all fails with exit 1 when every cache entry is broken", () =>
+    withTempVault((paths) => Effect.gen(function*() {
+      yield* writeConfiguredVault(paths)
+      yield* writeStaleEntry(paths.cacheRoot, "2401.99999", { id: "2401.99999", title: "Broken One" })
+      yield* writeStaleEntry(paths.cacheRoot, "2402.99999", { id: "2402.99999", title: "Broken Two" })
+
+      const result = yield* runRootWith(paths.cacheRoot, paths.configPath, ["vault", "all"])
+
+      expect(result.exit._tag).toBe("Failure")
+      expect(result.stdout).toContain(`Exported 0 of 2 papers to ${paths.vaultPath}`)
+      expect(result.stdout).toContain("Skipped:")
+      expect(result.stdout).toContain("2401.99999")
+      expect(result.stdout).toContain("2402.99999")
+      expect(result.stderr).toBe("error: vault export failed: all cache entries failed to export")
+    })))
+
+  it.effect("vault all on empty cache succeeds with a zero-count summary", () =>
+    withTempVault((paths) => Effect.gen(function*() {
+      yield* writeConfiguredVault(paths)
+
+      const result = yield* runRootWith(paths.cacheRoot, paths.configPath, ["vault", "all"])
+
+      expect(result.exit._tag).toBe("Success")
+      expect(result.stderr).toBe("")
+      expect(result.stdout).toBe(`Exported 0 of 0 papers to ${paths.vaultPath}`)
     })))
 })

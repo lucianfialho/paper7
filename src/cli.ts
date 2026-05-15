@@ -704,6 +704,8 @@ const formatVaultError = (error: VaultError): string => {
       return `error: vault export failed: ${error.message}`
     case "VaultFsError":
       return `error: vault export failed: ${error.message}`
+    case "VaultExportAllFailed":
+      return `error: vault export failed: ${error.message}`
   }
 }
 

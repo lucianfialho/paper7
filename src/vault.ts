@@ -36,12 +36,17 @@ export class VaultFsError extends Data.TaggedError("VaultFsError")<{
   readonly cause: unknown
 }> {}
 
+export class VaultExportAllFailed extends Data.TaggedError("VaultExportAllFailed")<{
+  readonly message: string
+}> {}
+
 export type VaultError =
   | VaultConfigMissing
   | VaultInvalidPath
   | VaultCacheMissing
   | VaultCacheMalformed
   | VaultFsError
+  | VaultExportAllFailed
 
 export type VaultInitResult = {
   readonly path: string
@@ -52,8 +57,15 @@ export type VaultExportResult = {
   readonly path: string
 }
 
+export type VaultExportFailure = {
+  readonly id: string
+  readonly reason: string
+}
+
 export type VaultExportAllResult = {
-  readonly count: number
+  readonly exported: ReadonlyArray<VaultExportResult>
+  readonly failed: ReadonlyArray<VaultExportFailure>
+  readonly total: number
   readonly path: string
 }
 
@@ -81,24 +93,41 @@ export const exportPaperToVault = (id: PaperIdentifier): Effect.Effect<VaultExpo
     Effect.flatMap((vaultPath) => exportOne(vaultPath, id))
   )
 
+type ExportAttempt =
+  | { readonly kind: "ok"; readonly result: VaultExportResult }
+  | { readonly kind: "failed"; readonly id: string; readonly reason: string }
+
 export const exportAllPapersToVault = (): Effect.Effect<VaultExportAllResult, VaultError, VaultPaths | CachePathsContext> =>
   loadVaultPath().pipe(
     Effect.flatMap((vaultPath) =>
       listCachedPapers().pipe(
         Effect.mapError(cacheToVaultError),
         Effect.flatMap((result) => {
-          const exported = Effect.forEach(result.entries, (entry): Effect.Effect<VaultExportResult, VaultError, CachePathsContext> => {
+          const attempts = Effect.forEach(result.entries, (entry): Effect.Effect<ExportAttempt, never, CachePathsContext> => {
             const id = parsePaperIdentifier(entry.id)
             if (id === undefined) {
-              return Effect.fail(new VaultCacheMalformed({ message: `invalid cached paper id: ${entry.id}`, id: entry.id }))
+              return Effect.succeed({ kind: "failed", id: entry.id, reason: "invalid cached paper id" })
             }
-            return exportOne(vaultPath, id)
+            return exportOne(vaultPath, id).pipe(
+              Effect.map((written): ExportAttempt => ({ kind: "ok", result: written })),
+              Effect.catch((error): Effect.Effect<ExportAttempt> => Effect.succeed({ kind: "failed", id: entry.id, reason: error.message }))
+            )
           })
-          return exported.pipe(Effect.map((written) => ({ count: written.length, path: vaultPath })))
+          return attempts.pipe(Effect.map((all) => collectAttempts(all, vaultPath, result.entries.length)))
         })
       )
     )
   )
+
+const collectAttempts = (attempts: ReadonlyArray<ExportAttempt>, vaultPath: string, total: number): VaultExportAllResult => {
+  const exported: Array<VaultExportResult> = []
+  const failed: Array<VaultExportFailure> = []
+  for (const attempt of attempts) {
+    if (attempt.kind === "ok") exported.push(attempt.result)
+    else failed.push({ id: attempt.id, reason: attempt.reason })
+  }
+  return { exported, failed, total, path: vaultPath }
+}
 
 const exportOne = (vaultPath: string, id: PaperIdentifier): Effect.Effect<VaultExportResult, VaultError, CachePathsContext> => {
   const formattedId = formatIdentifier(id)
