@@ -2,9 +2,10 @@ import { Context, Data, Effect, Layer } from "effect"
 import type { Input as DurationInput } from "effect/Duration"
 import { readFile } from "node:fs/promises"
 import type { PaperIdentifier } from "./parser.js"
+import { resolveTimeoutMs, timeoutHint } from "./timeouts.js"
 
 const S2_API_URL = "https://api.semanticscholar.org/graph/v1"
-const DEFAULT_TIMEOUT_MS = 5_000
+const DEFAULT_TIMEOUT_MS = 20_000
 const DEFAULT_RETRIES = 2
 const DEFAULT_RETRY_DELAY: DurationInput = "150 millis"
 
@@ -86,7 +87,7 @@ type SemanticScholarClientOptions = {
 export const makeSemanticScholarClient = (options: SemanticScholarClientOptions = {}): SemanticScholarClientShape => {
   const apiUrl = options.apiUrl ?? S2_API_URL
   const fetchImpl = options.fetchImpl ?? fetch
-  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
+  const timeoutMs = options.timeoutMs ?? resolveTimeoutMs(DEFAULT_TIMEOUT_MS)
   const retries = options.retries ?? DEFAULT_RETRIES
   const retryDelay = options.retryDelay ?? DEFAULT_RETRY_DELAY
 
@@ -177,7 +178,7 @@ const loadJson = (input: {
   const request: Effect.Effect<Response, SemanticScholarError> = Effect.tryPromise({
     try: (signal) => fetchWithTimeout(input.fetchImpl, input.url, signal, input.timeoutMs),
     catch: (cause): SemanticScholarError => isAbortError(cause)
-      ? new SemanticScholarTimeoutError({ message: `Semantic Scholar request timed out after ${input.timeoutMs}ms` })
+      ? new SemanticScholarTimeoutError({ message: `Semantic Scholar request timed out after ${input.timeoutMs}ms\n${timeoutHint}` })
       : new SemanticScholarTransientError({ message: "Semantic Scholar request failed", cause }),
   })
 

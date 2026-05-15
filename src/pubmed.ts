@@ -2,11 +2,12 @@ import { Context, Data, Effect, Layer } from "effect"
 import type { Input as DurationInput } from "effect/Duration"
 import { readFile } from "node:fs/promises"
 import type { SearchSort } from "./parser.js"
+import { resolveTimeoutMs, timeoutHint } from "./timeouts.js"
 
 const PUBMED_SEARCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
 const PUBMED_SUMMARY_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"
 const PUBMED_FETCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
-const DEFAULT_TIMEOUT_MS = 5_000
+const DEFAULT_TIMEOUT_MS = 20_000
 const DEFAULT_RETRIES = 2
 const DEFAULT_RETRY_DELAY: DurationInput = "150 millis"
 
@@ -95,7 +96,7 @@ export const makePubmedClient = (options: PubmedClientOptions = {}): PubmedClien
   const summaryUrl = options.summaryUrl ?? PUBMED_SUMMARY_URL
   const fetchUrl = options.fetchUrl ?? PUBMED_FETCH_URL
   const fetchImpl = options.fetchImpl ?? fetch
-  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
+  const timeoutMs = options.timeoutMs ?? resolveTimeoutMs(DEFAULT_TIMEOUT_MS)
   const retries = options.retries ?? DEFAULT_RETRIES
   const retryDelay = options.retryDelay ?? DEFAULT_RETRY_DELAY
 
@@ -237,7 +238,7 @@ const loadJson = (input: {
   const request: Effect.Effect<Response, PubmedError> = Effect.tryPromise({
     try: (signal) => fetchWithTimeout(input.fetchImpl, input.url, signal, input.timeoutMs),
     catch: (cause): PubmedError => isAbortError(cause)
-      ? new PubmedTimeoutError({ message: `PubMed request timed out after ${input.timeoutMs}ms` })
+      ? new PubmedTimeoutError({ message: `PubMed request timed out after ${input.timeoutMs}ms\n${timeoutHint}` })
       : new PubmedTransientError({ message: "PubMed request failed", cause }),
   })
 
