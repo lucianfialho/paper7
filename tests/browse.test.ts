@@ -12,7 +12,6 @@ import { CachePaths } from "../src/cache.js"
 import { rootCommand, VERSION } from "../src/cli.js"
 import { CrossrefClient, CrossrefDecodeError, type CrossrefClientShape } from "../src/crossref.js"
 import { PubmedClient, PubmedDecodeError, type PubmedClientShape } from "../src/pubmed.js"
-import { PapersWithCodeDecodeError, RepositoryDiscoveryClient, type RepositoryDiscoveryClientShape } from "../src/repo.js"
 import { SemanticScholarClient, SemanticScholarDecodeError, type SemanticScholarClientShape } from "../src/semanticScholar.js"
 
 const deterministicCliOutput = CliOutput.layer(CliOutput.defaultFormatter({ colors: false }))
@@ -38,10 +37,6 @@ const unusedCrossref: CrossrefClientShape = {
 const unusedSemanticScholar: SemanticScholarClientShape = {
   references: () => Effect.fail(new SemanticScholarDecodeError({ message: "unexpected references" })),
   tldr: () => Effect.fail(new SemanticScholarDecodeError({ message: "unexpected tldr" }))
-}
-
-const unusedRepositoryDiscovery: RepositoryDiscoveryClientShape = {
-  discover: () => Effect.fail(new PapersWithCodeDecodeError({ message: "unexpected discover" }))
 }
 
 const makeStdioLayer = (input: string) =>
@@ -71,7 +66,6 @@ const runRootWith = (cacheRoot: string, input: string) =>
       Effect.provideService(PubmedClient, unusedPubmed),
       Effect.provideService(CrossrefClient, unusedCrossref),
       Effect.provideService(SemanticScholarClient, unusedSemanticScholar),
-      Effect.provideService(RepositoryDiscoveryClient, unusedRepositoryDiscovery),
       Effect.provide(stdio.layer)
     )
     const exit = yield* Effect.result(program)

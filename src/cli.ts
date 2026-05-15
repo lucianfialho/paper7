@@ -15,7 +15,6 @@ import type { KbError } from "./kb.js"
 import type { CliCommand, CitationFormat, PaperIdentifier, RangeSpec } from "./parser.js"
 import { parsePaperIdentifier, parseRangeSpec } from "./parser.js"
 import { PubmedClient, PubmedLive, type PubmedError } from "./pubmed.js"
-import { RepositoryDiscoveryClient, RepositoryDiscoveryLive, type RepositoryDiscoveryError } from "./repo.js"
 import type { RefsError } from "./refs.js"
 import { SemanticScholarClient, SemanticScholarLive, type SemanticScholarError } from "./semanticScholar.js"
 import { VaultPaths, VaultPathsLive, type VaultError } from "./vault.js"
@@ -233,14 +232,14 @@ export const makeRootCommand = (loaders?: Partial<CommandLoaders>) => {
     )
 
   const repoCommand = Command.make("repo", {
-    id: Argument.string("id").pipe(Argument.withDescription("Paper identifier"))
-  }, (config) =>
-    parseIdentifierEffect("repo", config.id).pipe(
-      Effect.flatMap((id) => runCommand({ tag: "repo", id }))
-    )).pipe(
-      Command.withShortDescription("Find code repositories"),
-      Command.withDescription("Discover code repositories associated with a paper via Papers With Code. Use this when you want to reproduce results or explore the implementation of a paper.")
+    id: Argument.string("id").pipe(
+      Argument.withDescription("Paper identifier (ignored — command is deprecated)"),
+      Argument.optional
     )
+  }, () => runCommand({ tag: "repo" })).pipe(
+    Command.withShortDescription("[Deprecated] Find code repositories"),
+    Command.withDescription("Deprecated. Papers With Code's API was discontinued and no drop-in replacement currently exists. Running this command prints a deprecation notice; the identifier argument (if given) is ignored.")
+  )
 
   const citeCommand = Command.make("cite", {
     id: Argument.string("id").pipe(Argument.withDescription("Paper identifier")),
@@ -394,7 +393,6 @@ export type CliCommandError =
   | GetError
   | RefsError
   | CitationError
-  | RepositoryDiscoveryError
   | CacheError
   | VaultError
   | BrowseError
@@ -406,7 +404,7 @@ const reportAndFail =
     Console.error(format(error)).pipe(Effect.andThen(Effect.fail(error)))
 
 function makeRunCommand(loaders: CommandLoaders) {
-  return (command: CliCommand): Effect.Effect<void, CliCommandError, ArxivClient | Ar5ivClient | PubmedClient | CrossrefClient | SemanticScholarClient | RepositoryDiscoveryClient | CachePaths | VaultPaths | Stdio.Stdio> => {
+  return (command: CliCommand): Effect.Effect<void, CliCommandError, ArxivClient | Ar5ivClient | PubmedClient | CrossrefClient | SemanticScholarClient | CachePaths | VaultPaths | Stdio.Stdio> => {
     switch (command.tag) {
       case "search":
         return loaders.search().pipe(
@@ -443,10 +441,9 @@ function makeRunCommand(loaders: CommandLoaders) {
       case "repo":
         return loaders.repo().pipe(
           Effect.flatMap((module) => module.runRepoCommand(command)),
-          Effect.catch((error: CommandLoadError | RepositoryDiscoveryError): Effect.Effect<never, CommandLoadError | RepositoryDiscoveryError> => {
-            if (error._tag === "CommandLoadError") return reportAndFail(formatCommandLoadError)(error)
-            return reportAndFail(formatRepositoryDiscoveryError)(error)
-          })
+          Effect.catch((error: CommandLoadError): Effect.Effect<never, CommandLoadError> =>
+            reportAndFail(formatCommandLoadError)(error)
+          )
         )
       case "list":
       case "cache-clear":
@@ -658,23 +655,6 @@ const formatSemanticScholarError = (error: SemanticScholarError): string => {
   }
 }
 
-const formatRepositoryDiscoveryError = (error: RepositoryDiscoveryError): string => {
-  switch (error._tag) {
-    case "PapersWithCodeHttpError":
-      return `error: Papers With Code failure: ${error.message}`
-    case "PapersWithCodeRateLimitError":
-      return error.retryAfter === undefined
-        ? `error: Papers With Code rate limit exceeded`
-        : `error: Papers With Code rate limit exceeded; retry after ${error.retryAfter}`
-    case "PapersWithCodeTransientError":
-      return `error: Papers With Code upstream failure: ${error.message}`
-    case "PapersWithCodeTimeoutError":
-      return `error: Papers With Code upstream failure: ${error.message}`
-    case "PapersWithCodeDecodeError":
-      return `error: Papers With Code decode failure: ${error.message}`
-  }
-}
-
 const formatCacheError = (error: CacheError): string => {
   switch (error._tag) {
     case "CacheFsError":
@@ -713,7 +693,6 @@ export const main = Command.run(rootCommand, { version: VERSION }).pipe(
   Effect.provide(PubmedLive),
   Effect.provide(CrossrefLive),
   Effect.provide(SemanticScholarLive),
-  Effect.provide(RepositoryDiscoveryLive),
   Effect.provide(CachePathsLive),
   Effect.provide(VaultPathsLive),
   Effect.provide(NodeServices.layer)
