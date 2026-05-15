@@ -7,7 +7,7 @@ import { CliOutput, Command } from "effect/unstable/cli"
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
-import { Ar5ivClient, Ar5ivDecodeError, type Ar5ivClientShape } from "../src/ar5iv.js"
+import { Ar5ivClient, Ar5ivDecodeError, Ar5ivHttpError, Ar5ivTimeoutError, type Ar5ivClientShape } from "../src/ar5iv.js"
 import { ArxivClient, ArxivDecodeError, makeArxivClient, type ArxivClientShape } from "../src/arxiv.js"
 import { rootCommand, VERSION } from "../src/cli.js"
 import { CliValidationError } from "../src/cliValidation.js"
@@ -372,20 +372,46 @@ describe("get command", () => {
       expect(cached).not.toContain("<untrusted-content")
     })))
 
-  it.effect("surfaces typed upstream failures", () =>
+  it.effect("surfaces typed upstream failures from non-ar5iv sources", () =>
     withTempHome(Effect.gen(function*() {
       const result = yield* runRootWith(["get", "doi:10.5555/example.paper", "--no-tldr"], fixtureClients({
         crossref: { get: () => Effect.fail(new CrossrefDecodeError({ message: "Crossref bad shape" })) }
       }))
-      const ar5ivResult = yield* runRootWith(["get", "2401.04088", "--no-tldr"], fixtureClients({
-        arxiv: { search: unusedArxiv.search, get: () => Effect.succeed(arxivMetadata) },
-        ar5iv: { getHtml: () => Effect.fail(new Ar5ivDecodeError({ message: "ar5iv response missing article" })) }
-      }))
 
       expect(result.exit._tag).toBe("Failure")
       expect(result.stderr).toBe("error: Crossref decode failure: Crossref bad shape")
-      expect(ar5ivResult.exit._tag).toBe("Failure")
-      expect(ar5ivResult.stderr).toBe("error: ar5iv decode failure: ar5iv response missing article")
+    })))
+
+  it.effect("falls back to abstract-only when ar5iv has no full-text render (issue #22)", () =>
+    withTempHome(Effect.gen(function*() {
+      const decodeResult = yield* runRootWith(["get", "2401.04088", "--no-tldr"], fixtureClients({
+        arxiv: { search: unusedArxiv.search, get: () => Effect.succeed(arxivMetadata) },
+        ar5iv: { getHtml: () => Effect.fail(new Ar5ivDecodeError({ message: "ar5iv response missing article" })) }
+      }))
+      const httpResult = yield* runRootWith(["get", "2401.04088", "--no-tldr"], fixtureClients({
+        arxiv: { search: unusedArxiv.search, get: () => Effect.succeed(arxivMetadata) },
+        ar5iv: { getHtml: () => Effect.fail(new Ar5ivHttpError({ status: 404, message: "ar5iv HTTP 404" })) }
+      }))
+
+      expect(decodeResult.exit._tag).toBe("Success")
+      expect(decodeResult.stdout).toContain("## Abstract")
+      expect(decodeResult.stdout).toContain("An abstract from arXiv.")
+      expect(decodeResult.stdout).not.toContain("Introduction")
+
+      expect(httpResult.exit._tag).toBe("Success")
+      expect(httpResult.stdout).toContain("## Abstract")
+      expect(httpResult.stdout).toContain("An abstract from arXiv.")
+    })))
+
+  it.effect("does not fall back when ar5iv times out (issue #22)", () =>
+    withTempHome(Effect.gen(function*() {
+      const result = yield* runRootWith(["get", "2401.04088", "--no-tldr"], fixtureClients({
+        arxiv: { search: unusedArxiv.search, get: () => Effect.succeed(arxivMetadata) },
+        ar5iv: { getHtml: () => Effect.fail(new Ar5ivTimeoutError({ message: "ar5iv request timed out after 5000ms" })) }
+      }))
+
+      expect(result.exit._tag).toBe("Failure")
+      expect(result.stderr).toContain("ar5iv request timed out")
     })))
 
   it.effect("abstract-only fetches metadata without full-text client", () =>
@@ -437,14 +463,14 @@ describe("get yieldable failures", () => {
       expect(result.error.message).toBe("arXiv decode failure")
     }))
 
-  it.effect("getArxivPaper yields GetAr5ivError with nested Ar5ivDecodeError", () =>
+  it.effect("getArxivPaper yields GetAr5ivError on ar5iv timeout (no fallback)", () =>
     Effect.gen(function*() {
       const arxivClient: ArxivClientShape = {
         search: () => Effect.fail(new ArxivDecodeError({ message: "unexpected search" })),
         get: () => Effect.succeed(arxivMetadata),
       }
       const ar5ivClient: Ar5ivClientShape = {
-        getHtml: () => Effect.fail(new Ar5ivDecodeError({ message: "ar5iv decode failure" })),
+        getHtml: () => Effect.fail(new Ar5ivTimeoutError({ message: "ar5iv request timed out after 5000ms" })),
       }
       const semanticScholar: SemanticScholarClientShape = {
         references: () => Effect.fail(new SemanticScholarDecodeError({ message: "unexpected references" })),
@@ -459,8 +485,33 @@ describe("get yieldable failures", () => {
       )
 
       expect(result).toBeInstanceOf(GetAr5ivError)
-      expect(result.error).toBeInstanceOf(Ar5ivDecodeError)
-      expect(result.error.message).toBe("ar5iv decode failure")
+      expect(result.error).toBeInstanceOf(Ar5ivTimeoutError)
+      expect(result.error.message).toContain("ar5iv request timed out")
+    }))
+
+  it.effect("getArxivPaper falls back to abstract-only on Ar5ivDecodeError (issue #22)", () =>
+    Effect.gen(function*() {
+      const arxivClient: ArxivClientShape = {
+        search: () => Effect.fail(new ArxivDecodeError({ message: "unexpected search" })),
+        get: () => Effect.succeed(arxivMetadata),
+      }
+      const ar5ivClient: Ar5ivClientShape = {
+        getHtml: () => Effect.fail(new Ar5ivDecodeError({ message: "ar5iv response missing article" })),
+      }
+      const semanticScholar: SemanticScholarClientShape = {
+        references: () => Effect.fail(new SemanticScholarDecodeError({ message: "unexpected references" })),
+        tldr: () => Effect.succeed(undefined),
+      }
+
+      const result = yield* getArxivPaper({ id: "2401.04088", cache: false, refs: true, tldr: false, detailed: true, abstractOnly: false }).pipe(
+        Effect.provideService(ArxivClient, arxivClient),
+        Effect.provideService(Ar5ivClient, ar5ivClient),
+        Effect.provideService(SemanticScholarClient, semanticScholar)
+      )
+
+      expect(result).toContain("## Abstract")
+      expect(result).toContain("An abstract from arXiv.")
+      expect(result).not.toContain("Introduction")
     }))
 
   it.effect("getPubmedPaper yields GetPubmedError with nested PubmedDecodeError", () =>
