@@ -135,6 +135,23 @@ export const getDoiPaper = (params: GetDoiParams): Effect.Effect<string, GetErro
   )
 }
 
+const fetchAr5ivHtmlOrFallback = (id: string): Effect.Effect<string | undefined, GetError, Ar5ivClient> =>
+  Ar5ivClient.use((ar5iv) => ar5iv.getHtml(id)).pipe(
+    Effect.catch((error): Effect.Effect<string | undefined, GetError> => {
+      if (error._tag === "Ar5ivDecodeError" || error._tag === "Ar5ivHttpError") {
+        return Effect.logWarning(`ar5iv has no full-text render for ${id}; falling back to abstract-only`).pipe(
+          Effect.as(undefined)
+        )
+      }
+      return Effect.fail(new GetAr5ivError({ error }))
+    })
+  )
+
+const buildArxivBodyMarkdown = (metadata: ArxivPaperMetadata, html: string | undefined, tldr: string | undefined): string =>
+  html === undefined
+    ? buildArxivAbstractMarkdown(metadata, tldr)
+    : buildCanonicalMarkdown(metadata, html, tldr)
+
 const fetchAndCache = (
   id: string,
   dir: string,
@@ -144,13 +161,11 @@ const fetchAndCache = (
     Effect.mapError((error): GetError => new GetArxivError({ error })),
     Effect.zipWith(
       Effect.zipWith(
-        Ar5ivClient.use((ar5iv) => ar5iv.getHtml(id)).pipe(
-          Effect.mapError((error): GetError => new GetAr5ivError({ error }))
-        ),
+        fetchAr5ivHtmlOrFallback(id),
         fetchTldr({ tag: "arxiv", id }),
         (html, tldr) => ({ html, tldr })
       ),
-      (metadata, fetched) => buildCanonicalMarkdown(metadata, fetched.html, fetched.tldr)
+      (metadata, fetched) => buildArxivBodyMarkdown(metadata, fetched.html, fetched.tldr)
     ),
     Effect.flatMap((markdown) => writeCachedPaper(dir, cacheFile, markdown).pipe(Effect.as(markdown)))
   )
@@ -163,10 +178,8 @@ const fetchAndCacheWithoutTldr = (
   ArxivClient.use((arxiv) => arxiv.get(id)).pipe(
     Effect.mapError((error): GetError => new GetArxivError({ error })),
     Effect.zipWith(
-      Ar5ivClient.use((ar5iv) => ar5iv.getHtml(id)).pipe(
-        Effect.mapError((error): GetError => new GetAr5ivError({ error }))
-      ),
-      (metadata, html) => buildCanonicalMarkdown(metadata, html, undefined)
+      fetchAr5ivHtmlOrFallback(id),
+      (metadata, html) => buildArxivBodyMarkdown(metadata, html, undefined)
     ),
     Effect.flatMap((markdown) => writeCachedPaper(dir, cacheFile, markdown).pipe(Effect.as(markdown)))
   )
