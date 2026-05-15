@@ -5,7 +5,6 @@ import * as TestConsole from "effect/testing/TestConsole"
 import { CliOutput, Command } from "effect/unstable/cli"
 import { rootCommand, VERSION } from "../src/cli.js"
 import { getReferences, RefsSemanticScholarError } from "../src/refs.js"
-import { makeRepositoryDiscoveryClient, PapersWithCodeDecodeError, PapersWithCodeHttpError, PapersWithCodeRateLimitError, PapersWithCodeTimeoutError, PapersWithCodeTransientError, RepositoryDiscoveryClient, type RepositoryDiscoveryClientShape } from "../src/repo.js"
 import { makeSemanticScholarClient, SemanticScholarClient, SemanticScholarDecodeError, SemanticScholarNotFoundError, SemanticScholarRateLimitError, SemanticScholarTimeoutError, type SemanticScholarClientShape } from "../src/semanticScholar.js"
 
 const deterministicCliOutput = CliOutput.layer(CliOutput.defaultFormatter({ colors: false }))
@@ -37,41 +36,22 @@ const partialRefsJson = JSON.stringify({
   ]
 })
 
-const papersJson = JSON.stringify({ results: [{ id: "fixture-paper", title: "Fixture Repository Paper" }] })
-const emptyPapersJson = JSON.stringify({ results: [] })
-const reposJson = JSON.stringify({
-  results: [{ url: "https://github.com/example/fixture-repo", name: "fixture-repo", is_official: true }]
-})
-const partialReposJson = JSON.stringify({
-  results: [
-    { name: "missing-url" },
-    { url: "https://github.com/example/recovered-repo", name: "recovered-repo", is_official: false }
-  ]
-})
-const badShapeJson = JSON.stringify({ items: [] })
-
 const unusedSemanticScholar: SemanticScholarClientShape = {
   references: () => Effect.fail(new SemanticScholarDecodeError({ message: "unexpected references" })),
   tldr: () => Effect.succeed(undefined)
-}
-
-const unusedRepositoryDiscovery: RepositoryDiscoveryClientShape = {
-  discover: () => Effect.fail(new PapersWithCodeDecodeError({ message: "unexpected repo discovery" }))
 }
 
 const runRootWith = (
   args: ReadonlyArray<string>,
   services: {
     readonly semanticScholar?: SemanticScholarClientShape
-    readonly repositoryDiscovery?: RepositoryDiscoveryClientShape
   }
 ) =>
   Effect.gen(function*() {
     const testConsole = yield* TestConsole.make
     const program = Command.runWith(rootCommand, { version: VERSION })(args).pipe(
       Effect.provideService(Console.Console, testConsole),
-      Effect.provideService(SemanticScholarClient, services.semanticScholar ?? unusedSemanticScholar),
-      Effect.provideService(RepositoryDiscoveryClient, services.repositoryDiscovery ?? unusedRepositoryDiscovery)
+      Effect.provideService(SemanticScholarClient, services.semanticScholar ?? unusedSemanticScholar)
     )
     const exit = yield* Effect.result(program)
     const logs = yield* testConsole.logLines
@@ -147,12 +127,9 @@ describe("refs command", () => {
   it.effect("rejects missing ids before invoking services", () =>
     Effect.gen(function*() {
       const refs = yield* runRootWith(["refs"], {})
-      const repo = yield* runRootWith(["repo"], {})
 
       expect(refs.exit._tag).toBe("Failure")
       expect(`${refs.stdout}\n${refs.stderr}`).toContain("id")
-      expect(repo.exit._tag).toBe("Failure")
-      expect(`${repo.stdout}\n${repo.stderr}`).toContain("id")
     }))
 
   it.effect("surfaces Semantic Scholar missing, timeout, retry, and rate-limit paths", () =>
@@ -188,115 +165,29 @@ describe("refs command", () => {
     }))
 })
 
-describe("repo command", () => {
-  it.effect("routes typed ids through repository discovery and renders candidates", () =>
+describe("repo command (deprecated)", () => {
+  it.effect("prints a deprecation notice and exits 0 with no id (issue #21)", () =>
     Effect.gen(function*() {
-      let captured = ""
-      const result = yield* runRootWith(["repo", "doi:10.1000/example"], {
-        repositoryDiscovery: {
-          discover: (id) => Effect.sync(() => { captured = `${id.tag}:${id.id}` }).pipe(
-            Effect.andThen(makeRepositoryDiscoveryClient({ fetchImpl: async (url) => new Response(url.includes("/repositories/") ? reposJson : papersJson), retries: 0 }).discover(id))
-          )
-        }
-      })
+      const result = yield* runRootWith(["repo"], {})
 
       expect(result.exit._tag).toBe("Success")
       expect(result.stderr).toBe("")
-      expect(captured).toBe("doi:10.1000/example")
-      expect(result.stdout).toContain("Found 1 repository candidate:")
-      expect(result.stdout).toContain("[papers-with-code official] fixture-repo")
-      expect(result.stdout).toContain("https://github.com/example/fixture-repo")
+      expect(result.stdout).toContain("paper7 repo is deprecated")
+      expect(result.stdout).toContain("Papers With Code API has been discontinued")
+      expect(result.stdout).toContain("paper7 get <id> --abstract-only")
     }))
 
-  it.effect("labels missing repositories, partial failures, and decode errors", () =>
+  it.effect("ignores the id argument and still prints the deprecation notice (issue #21)", () =>
     Effect.gen(function*() {
-      const missing = yield* runRootWith(["repo", "1706.03762"], {
-        repositoryDiscovery: makeRepositoryDiscoveryClient({ fetchImpl: async () => new Response(emptyPapersJson), retries: 0 })
-      })
-      const partial = yield* runRootWith(["repo", "1706.03762"], {
-        repositoryDiscovery: makeRepositoryDiscoveryClient({ fetchImpl: async (url) => new Response(url.includes("/repositories/") ? partialReposJson : papersJson), retries: 0 })
-      })
-      const decode = yield* runRootWith(["repo", "1706.03762"], {
-        repositoryDiscovery: makeRepositoryDiscoveryClient({ fetchImpl: async () => new Response(badShapeJson), retries: 0 })
-      })
+      const result = yield* runRootWith(["repo", "2210.03629"], {})
 
-      expect(missing.exit._tag).toBe("Success")
-      expect(missing.stdout).toBe("No repositories found")
-      expect(partial.exit._tag).toBe("Success")
-      expect(partial.stdout).toContain("Papers With Code partial failure: skipped malformed repository")
-      expect(partial.stdout).toContain("https://github.com/example/recovered-repo")
-      expect(decode.exit._tag).toBe("Failure")
-      expect(decode.stderr).toBe("error: Papers With Code decode failure: Papers With Code paper response missing results")
-    }))
-
-  it.effect("surfaces repository timeout, retry, transient, and rate-limit paths", () =>
-    Effect.gen(function*() {
-      let retryCalls = 0
-      let transientCalls = 0
-      const timeout = yield* runRootWith(["repo", "1706.03762"], {
-        repositoryDiscovery: { discover: () => Effect.fail(new PapersWithCodeTimeoutError({ message: "Papers With Code request timed out after 5ms" })) }
-      })
-      const rate = yield* runRootWith(["repo", "1706.03762"], {
-        repositoryDiscovery: makeRepositoryDiscoveryClient({ fetchImpl: async () => new Response("limited", { status: 429, headers: { "retry-after": "60" } }), retries: 1, retryDelay: 0 })
-      })
-      const retryClient = makeRepositoryDiscoveryClient({
-        fetchImpl: async (url) => {
-          retryCalls += 1
-          if (retryCalls === 1) return new Response("busy", { status: 500 })
-          return new Response(url.includes("/repositories/") ? JSON.stringify({ results: [] }) : papersJson)
-        },
-        retries: 1,
-        retryDelay: 0
-      })
-      const transientClient = makeRepositoryDiscoveryClient({
-        fetchImpl: async () => {
-          transientCalls += 1
-          return new Response("busy", { status: 500 })
-        },
-        retries: 1,
-        retryDelay: 0
-      })
-      const retried = yield* retryClient.discover({ tag: "arxiv", id: "1706.03762" })
-      const transient = yield* Effect.result(transientClient.discover({ tag: "pubmed", id: "38903003" }))
-
-      expect(timeout.exit._tag).toBe("Failure")
-      expect(timeout.stderr).toBe("error: Papers With Code upstream failure: Papers With Code request timed out after 5ms")
-      expect(rate.exit._tag).toBe("Failure")
-      expect(rate.stderr).toBe("error: Papers With Code rate limit exceeded; retry after 60")
-      expect(retryCalls).toBe(3)
-      expect(retried).toEqual({ candidates: [], warnings: [] })
-      expect(transient._tag).toBe("Failure")
-      expect(transientCalls).toBe(2)
+      expect(result.exit._tag).toBe("Success")
+      expect(result.stderr).toBe("")
+      expect(result.stdout).toContain("paper7 repo is deprecated")
     }))
 })
 
-describe("yieldable discovery errors", () => {
-  it.effect("repository errors are class instances", () =>
-    Effect.gen(function*() {
-      const decode = new PapersWithCodeDecodeError({ message: "decode" })
-      const timeout = new PapersWithCodeTimeoutError({ message: "timeout" })
-      const rate = new PapersWithCodeRateLimitError({ message: "rate", retryAfter: "30" })
-      const http = new PapersWithCodeHttpError({ status: 500, message: "http" })
-      const transient = new PapersWithCodeTransientError({ message: "transient", cause: "x" })
-
-      expect(decode._tag).toBe("PapersWithCodeDecodeError")
-      expect(timeout._tag).toBe("PapersWithCodeTimeoutError")
-      expect(rate._tag).toBe("PapersWithCodeRateLimitError")
-      expect(http._tag).toBe("PapersWithCodeHttpError")
-      expect(transient._tag).toBe("PapersWithCodeTransientError")
-      expect(rate.retryAfter).toBe("30")
-    }))
-
-  it.effect("repository errors can be yielded in generators", () =>
-    Effect.gen(function*() {
-      const result = yield* Effect.gen(function*() {
-        return yield* new PapersWithCodeTimeoutError({ message: " Papers With Code request timed out after 5ms" })
-      }).pipe(Effect.flip)
-
-      expect(result._tag).toBe("PapersWithCodeTimeoutError")
-      expect(result.message).toBe(" Papers With Code request timed out after 5ms")
-    }))
-
+describe("yieldable refs errors", () => {
   it.effect("refs wrapper yields RefsSemanticScholarError with nested SemanticScholarError", () =>
     Effect.gen(function*() {
       const fakeClient: SemanticScholarClientShape = {

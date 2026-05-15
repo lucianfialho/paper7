@@ -42,7 +42,7 @@ export type CliCommand =
       readonly max: number
       readonly json: boolean
     }
-  | { readonly tag: "repo"; readonly id: PaperIdentifier }
+  | { readonly tag: "repo" }
   | { readonly tag: "list" }
   | { readonly tag: "cache-clear"; readonly id?: PaperIdentifier }
   | { readonly tag: "vault-init"; readonly path: string }

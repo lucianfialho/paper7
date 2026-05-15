@@ -12,7 +12,6 @@ import { CachePaths } from "../src/cache.js"
 import { rootCommand, VERSION } from "../src/cli.js"
 import { CrossrefClient, CrossrefDecodeError, type CrossrefClientShape } from "../src/crossref.js"
 import { PubmedClient, PubmedDecodeError, type PubmedClientShape } from "../src/pubmed.js"
-import { PapersWithCodeDecodeError, RepositoryDiscoveryClient, type RepositoryDiscoveryClientShape } from "../src/repo.js"
 import { SemanticScholarClient, SemanticScholarDecodeError, type SemanticScholarClientShape } from "../src/semanticScholar.js"
 
 const deterministicCliOutput = CliOutput.layer(CliOutput.defaultFormatter({ colors: false }))
@@ -40,10 +39,6 @@ const unusedSemanticScholar: SemanticScholarClientShape = {
   tldr: () => Effect.fail(new SemanticScholarDecodeError({ message: "unexpected tldr" }))
 }
 
-const unusedRepositoryDiscovery: RepositoryDiscoveryClientShape = {
-  discover: () => Effect.fail(new PapersWithCodeDecodeError({ message: "unexpected discover" }))
-}
-
 const runRootWith = (cacheRoot: string, args: ReadonlyArray<string>) =>
   Effect.gen(function*() {
     const testConsole = yield* TestConsole.make
@@ -54,8 +49,7 @@ const runRootWith = (cacheRoot: string, args: ReadonlyArray<string>) =>
       Effect.provideService(Ar5ivClient, unusedAr5iv),
       Effect.provideService(PubmedClient, unusedPubmed),
       Effect.provideService(CrossrefClient, unusedCrossref),
-      Effect.provideService(SemanticScholarClient, unusedSemanticScholar),
-      Effect.provideService(RepositoryDiscoveryClient, unusedRepositoryDiscovery)
+      Effect.provideService(SemanticScholarClient, unusedSemanticScholar)
     )
     const exit = yield* Effect.result(program)
     const logs = yield* testConsole.logLines
