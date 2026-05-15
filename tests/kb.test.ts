@@ -96,4 +96,42 @@ describe("kb command", () => {
       expect(status.stdout).toContain("Pages: 1")
       expect(ingest.stdout).toContain("Attention Is All You Need")
     })))
+
+  it.effect("kb ingest with multiple ids prints a summary instead of paper markdown (issue #23)", () =>
+    withTempHome(Effect.gen(function*() {
+      const home = process.env.HOME ?? ""
+      const sources = join(home, ".paper7", "wiki", "sources")
+      const result = yield* run(["kb", "ingest", "1706.03762", "2401.04088"])
+
+      expect(result.exit._tag).toBe("Success")
+      expect(result.stderr).toBe("")
+      expect(result.stdout).toBe(`Ingested: 2/2 papers to ${sources}`)
+      expect(result.stdout).not.toContain("Attention Is All You Need")
+    })))
+
+  it.effect("kb ingest batch reports invalid identifiers in the Failed section (issue #23)", () =>
+    withTempHome(Effect.gen(function*() {
+      const home = process.env.HOME ?? ""
+      const sources = join(home, ".paper7", "wiki", "sources")
+      const result = yield* run(["kb", "ingest", "1706.03762", "bogus.id"])
+
+      expect(result.exit._tag).toBe("Success")
+      expect(result.stderr).toBe("")
+      expect(result.stdout).toContain(`Ingested: 1/2 papers to ${sources}`)
+      expect(result.stdout).toContain("Failed:")
+      expect(result.stdout).toContain("bogus.id — invalid identifier")
+    })))
+
+  it.effect("kb ingest batch exits 1 when every id fails (issue #23)", () =>
+    withTempHome(Effect.gen(function*() {
+      const home = process.env.HOME ?? ""
+      const sources = join(home, ".paper7", "wiki", "sources")
+      const result = yield* run(["kb", "ingest", "bogus.one", "bogus.two"])
+
+      expect(result.exit._tag).toBe("Failure")
+      expect(result.stdout).toContain(`Ingested: 0/2 papers to ${sources}`)
+      expect(result.stdout).toContain("bogus.one — invalid identifier")
+      expect(result.stdout).toContain("bogus.two — invalid identifier")
+      expect(result.stderr).toBe("error: all kb ingests failed")
+    })))
 })

@@ -1,4 +1,4 @@
-import { Data, Effect } from "effect"
+import { Console, Data, Effect } from "effect"
 import { appendFile, mkdir, readdir, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import type { Ar5ivClient } from "./ar5iv.js"
@@ -6,6 +6,7 @@ import type { ArxivClient } from "./arxiv.js"
 import type { CrossrefClient } from "./crossref.js"
 import { getPaper, type GetError } from "./get.js"
 import type { CliCommand, PaperIdentifier } from "./parser.js"
+import { parsePaperIdentifier } from "./parser.js"
 import type { PubmedClient } from "./pubmed.js"
 import type { SemanticScholarClient } from "./semanticScholar.js"
 
@@ -22,7 +23,11 @@ export class KbGetError extends Data.TaggedError("KbGetError")<{
   readonly error: GetError
 }> {}
 
-export type KbError = KbIoError | KbInvalidSlug | KbGetError
+export class KbIngestBatchFailed extends Data.TaggedError("KbIngestBatchFailed")<{
+  readonly message: string
+}> {}
+
+export type KbError = KbIoError | KbInvalidSlug | KbGetError | KbIngestBatchFailed
 
 type WikiPaths = {
   readonly root: string
@@ -34,7 +39,7 @@ type WikiPaths = {
 
 export type KbEnvironment = Ar5ivClient | ArxivClient | CrossrefClient | PubmedClient | SemanticScholarClient
 
-export const runKb = (command: Extract<CliCommand, { readonly tag: `kb-${string}` }>): Effect.Effect<string, KbError | GetError, KbEnvironment> => {
+export const runKb = (command: Exclude<Extract<CliCommand, { readonly tag: `kb-${string}` }>, { readonly tag: "kb-ingest-batch" }>): Effect.Effect<string, KbError | GetError, KbEnvironment> => {
   switch (command.tag) {
     case "kb-ingest":
       return ingest(command.id)
@@ -49,6 +54,67 @@ export const runKb = (command: Extract<CliCommand, { readonly tag: `kb-${string}
     case "kb-status":
       return statusKb()
   }
+}
+
+type BatchAttempt =
+  | { readonly kind: "ok"; readonly raw: string }
+  | { readonly kind: "fail"; readonly raw: string; readonly reason: string }
+
+export const runKbIngestBatch = (rawIds: ReadonlyArray<string>): Effect.Effect<void, KbError | GetError, KbEnvironment> =>
+  Effect.gen(function*() {
+    const paths = wikiPaths()
+    yield* ensureWiki(paths)
+    const attempts = yield* Effect.forEach(rawIds, ingestOneForBatch)
+    yield* Console.log(renderBatchSummary(attempts, paths.sources))
+    const ingested = attempts.filter((attempt) => attempt.kind === "ok").length
+    if (ingested === 0 && attempts.length > 0) {
+      return yield* Effect.fail(new KbIngestBatchFailed({ message: "all kb ingests failed" }))
+    }
+  })
+
+const ingestOneForBatch = (raw: string): Effect.Effect<BatchAttempt, never, KbEnvironment> => {
+  const id = parsePaperIdentifier(raw)
+  if (id === undefined) {
+    return Effect.succeed({ kind: "fail", raw, reason: "invalid identifier" })
+  }
+  return ingest(id).pipe(
+    Effect.map((): BatchAttempt => ({ kind: "ok", raw })),
+    Effect.catch((error): Effect.Effect<BatchAttempt> => Effect.succeed({ kind: "fail", raw, reason: batchErrorReason(error) }))
+  )
+}
+
+const batchErrorReason = (error: KbError | GetError): string => {
+  switch (error._tag) {
+    case "KbIoError":
+      return error.message
+    case "KbInvalidSlug":
+      return `invalid slug: ${error.slug}`
+    case "KbGetError":
+      return batchErrorReason(error.error)
+    case "KbIngestBatchFailed":
+      return error.message
+    case "GetArxivError":
+    case "GetAr5ivError":
+    case "GetPubmedError":
+    case "GetCrossrefError":
+      return error.error.message
+    case "GetCacheReadError":
+    case "GetCacheWriteError":
+    case "GetRangeError":
+      return error.message
+  }
+}
+
+const renderBatchSummary = (attempts: ReadonlyArray<BatchAttempt>, sourcesDir: string): string => {
+  const ingested = attempts.filter((attempt) => attempt.kind === "ok").length
+  const header = `Ingested: ${ingested}/${attempts.length} papers to ${sourcesDir}`
+  const failed = attempts.filter((attempt): attempt is Extract<BatchAttempt, { readonly kind: "fail" }> => attempt.kind === "fail")
+  if (failed.length === 0) return header
+  return [
+    header,
+    "Failed:",
+    ...failed.map((attempt) => `  ${attempt.raw} — ${attempt.reason}`),
+  ].join("\n")
 }
 
 const ingest = (id: PaperIdentifier): Effect.Effect<string, KbError | GetError, KbEnvironment> => {
