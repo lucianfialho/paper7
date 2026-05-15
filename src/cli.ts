@@ -305,11 +305,18 @@ export const makeRootCommand = (loaders?: Partial<CommandLoaders>) => {
   )
 
   const kbIngestCommand = Command.make("ingest", {
-    id: Argument.string("id").pipe(Argument.withDescription("Paper identifier"))
-  }, (config) =>
-    parseIdentifierEffect("kb ingest", config.id).pipe(
-      Effect.flatMap((id) => runCommand({ tag: "kb-ingest", id }))
-    )).pipe(Command.withShortDescription("Fetch paper into wiki sources"))
+    ids: Argument.string("id").pipe(
+      Argument.withDescription("One or more paper identifiers"),
+      Argument.variadic({ min: 1 })
+    )
+  }, (config) => {
+    if (config.ids.length === 1) {
+      return parseIdentifierEffect("kb ingest", config.ids[0]).pipe(
+        Effect.flatMap((id) => runCommand({ tag: "kb-ingest", id }))
+      )
+    }
+    return runCommand({ tag: "kb-ingest-batch", rawIds: config.ids })
+  }).pipe(Command.withShortDescription("Fetch one or more papers into wiki sources"))
 
   const kbReadCommand = Command.make("read", {
     slug: Argument.string("slug").pipe(Argument.withDescription("Page slug, index, or log"))
@@ -476,6 +483,7 @@ function makeRunCommand(loaders: CommandLoaders) {
           })
         )
       case "kb-ingest":
+      case "kb-ingest-batch":
       case "kb-read":
       case "kb-write":
       case "kb-search":
@@ -506,6 +514,7 @@ const isGetError = (error: KbError | GetError): error is GetError => {
     case "KbIoError":
     case "KbInvalidSlug":
     case "KbGetError":
+    case "KbIngestBatchFailed":
       return false
   }
 }
@@ -518,6 +527,8 @@ const formatKbError = (error: KbError): string => {
       return `error: invalid wiki slug: ${error.slug}`
     case "KbGetError":
       return formatGetError(error.error)
+    case "KbIngestBatchFailed":
+      return `error: ${error.message}`
   }
 }
 

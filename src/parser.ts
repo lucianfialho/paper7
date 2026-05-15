@@ -50,6 +50,7 @@ export type CliCommand =
   | { readonly tag: "vault-all" }
   | { readonly tag: "browse" }
   | { readonly tag: "kb-ingest"; readonly id: PaperIdentifier }
+  | { readonly tag: "kb-ingest-batch"; readonly rawIds: ReadonlyArray<string> }
   | { readonly tag: "kb-read"; readonly slug: string }
   | { readonly tag: "kb-write"; readonly slug: string }
   | { readonly tag: "kb-search"; readonly pattern: string }
